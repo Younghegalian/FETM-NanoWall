@@ -499,14 +499,148 @@ Regenerate them from the current `runs/sample_001` outputs with:
 
 `transport_fields.npz` contains:
 
-- `phi_total`: voxelwise total accumulated probability mass.
-- `phi_scatter`: first-scattering probability accumulated in each voxel.
-- `phi_surface`: direct surface-arrival probability accumulated at solid voxels.
-- `accessibility`: average direct arrival survival over hit directions.
-- `vis_ang`: fraction of directions that hit a solid surface.
-- `d_min_um`: minimum hit distance in `um`.
+- `phi_total`: voxelwise total event probability, defined as `phi_scatter + phi_surface`.
+- `phi_scatter`: first-scattering probability accumulated in void voxels.
+- `phi_surface`: direct surface-arrival probability accumulated at solid boundary voxels.
+- `accessibility`: source-voxel accessibility based on surviving direct flights to a wall.
+- `vis_ang`: source-voxel angular visibility, shown as `Angle fraction` in ParaView snapshots.
+- `d_min_um`: source-voxel minimum wall-hit distance in `um`.
 - `mask_solid`: boolean solid/void voxel domain.
 - `metadata_json`: run metadata and probability diagnostics.
+
+### Field Interpretation
+
+The output fields fall into two groups.
+
+Event-density fields describe where transport probability is deposited after
+launching rays from all void voxels:
+
+| Field | Stored on | Meaning |
+| --- | --- | --- |
+| `phi_scatter` | mostly void cells | Probability that the first event is a scattering event inside that voxel. |
+| `phi_surface` | solid boundary cells | Probability that a ray reaches a solid surface directly before scattering. |
+| `phi_total` | all cells | Combined event density: `phi_scatter + phi_surface`. |
+
+Source-diagnostic fields describe what a ray launched from a given void voxel
+can see:
+
+| Field | Stored on | Meaning |
+| --- | --- | --- |
+| `accessibility` | void source cells | Direction-averaged direct-arrival survival probability. |
+| `vis_ang` | void source cells | Fraction of sampled directions that hit the nanowall surface. |
+| `d_min_um` | void source cells | Shortest wall-hit distance over all hit directions. |
+
+### Accessibility
+
+`accessibility(x_i)` measures how strongly a source voxel is connected to nearby
+solid surfaces by direct free flight. For each sampled direction that hits a
+surface at distance `d_m`, the contribution is the survival probability
+`exp(-d_m/lambda)`. Directions that do not hit a surface contribute zero:
+
+$$A(x_i) = \frac{1}{N}\sum_{m \in H_i}\exp\left(-\frac{d_m}{\lambda}\right)$$
+
+where `H_i` is the set of hit directions from source voxel `x_i`.
+
+Interpretation:
+
+- High `accessibility`: many directions reach nearby wall surfaces with little
+  free-flight attenuation.
+- Low `accessibility`: the voxel is shielded, far from surfaces, or many rays do
+  not hit a wall within the configured ray budget.
+- In ParaView, this is useful for finding geometrically exposed void channels
+  and wall-adjacent transport corridors.
+
+### Angular Visibility / Angle Fraction
+
+`vis_ang(x_i)` is the fraction of sampled directions that eventually hit a solid
+surface:
+
+$$V(x_i) = \frac{|H_i|}{N}$$
+
+This is shown as `Angle fraction` in the ParaView screenshots.
+
+Interpretation:
+
+- High `vis_ang`: surfaces are visible over many outgoing directions.
+- Low `vis_ang`: the voxel has limited solid-surface visibility, often due to
+  shielding by the nanowall geometry or open paths toward the box boundary.
+- Unlike `accessibility`, this field does not weight hits by distance. A far hit
+  and a near hit both count as one visible direction.
+
+### Minimum Wall Distance
+
+`d_min_um(x_i)` stores the nearest wall-hit distance over all sampled directions:
+
+$$d_{\min}(x_i) = \min_{m \in H_i} d_m$$
+
+Interpretation:
+
+- Small `d_min_um`: the source voxel is close to a solid wall.
+- Large `d_min_um`: the nearest visible wall is farther away.
+- `-1` means no hit direction was found for that voxel under the current
+  reflection and maximum-distance settings.
+
+### Scattering Probability
+
+`phi_scatter(x)` is accumulated along ray segments. For every ray segment
+`[s_a, s_b]` passing through voxel `x`, the deposited probability is:
+
+$$\Delta F = \exp\left(-\frac{s_a}{\lambda}\right) - \exp\left(-\frac{s_b}{\lambda}\right)$$
+
+The accumulated field is:
+
+$$\phi_{\mathrm{scatter}}(x) = \sum_{\mathrm{rays\ through\ }x}\phi_{\mathrm{in}}(x_i)w_m\Delta F$$
+
+Interpretation:
+
+- High `phi_scatter`: many first-scattering events are expected inside that
+  voxel.
+- Low `phi_scatter`: few rays pass through that voxel before their first event,
+  or survival probability is already strongly attenuated.
+- This field is volumetric; it is not a surface-only result.
+
+### Surface Arrival Probability
+
+`phi_surface(x_s)` is accumulated when a ray reaches a solid boundary voxel
+before scattering:
+
+$$\phi_{\mathrm{surface}}(x_s) = \sum_{\mathrm{hits\ at\ }x_s}\phi_{\mathrm{in}}(x_i)w_m\exp\left(-\frac{d}{\lambda}\right)$$
+
+Interpretation:
+
+- High `phi_surface`: the surface voxel is frequently reached by direct
+  free-flight paths.
+- Low `phi_surface`: the surface is shadowed, geometrically hard to reach, or
+  reached only after long attenuated paths.
+
+### Total Event Field
+
+`phi_total` is the combined event-density field:
+
+$$\phi_{\mathrm{total}}(x) = \phi_{\mathrm{scatter}}(x) + \phi_{\mathrm{surface}}(x)$$
+
+Use `phi_total` when a single scalar field is needed for total first-event
+activity. Use `phi_scatter` and `phi_surface` separately when volume scattering
+and wall arrival should be interpreted independently.
+
+### Probability Diagnostics
+
+The metadata reports:
+
+```text
+scatter_sum
+surface_sum
+escape_mass
+lost_mass
+probability_sum
+```
+
+These values check whether probability is conserved:
+
+$$\sum_x \phi_{\mathrm{scatter}}(x) + \sum_x \phi_{\mathrm{surface}}(x) + M_{\mathrm{escape}} + M_{\mathrm{lost}} \approx 1$$
+
+For the current high-resolution run, `probability_sum` is numerically very close
+to `1`, so the ray decomposition is behaving consistently.
 
 ParaView fields in `transport_fields.vti` use cell data with array layout:
 
