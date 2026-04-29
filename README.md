@@ -187,57 +187,41 @@ after DA3 inference, orientation correction, base locking, and height scaling:
 
 If a manual SEM ruler line is supplied,
 
-$$
-s_{px}
-= \frac{L_{um}}
-{\sqrt{(x_2-x_1)^2 + (y_2-y_1)^2}}
-$$
+$$s_{px} = \frac{L_{\mathrm{um}}}{\sqrt{(x_2-x_1)^2 + (y_2-y_1)^2}}$$
 
 where `s_px` is the source-image pixel size in `um / px`.
 
 After DA3 resizing, output pixel sizes are:
 
-$$
-\Delta x
-= s_{px}\frac{W_{crop}}{W_{depth}},
-\qquad
-\Delta y
-= s_{px}\frac{H_{crop}}{H_{depth}}
-$$
+$$\Delta x = s_{px}\frac{W_{\mathrm{crop}}}{W_{\mathrm{depth}}}, \qquad \Delta y = s_{px}\frac{H_{\mathrm{crop}}}{H_{\mathrm{depth}}}$$
 
 ### Depth Orientation
 
 Depth-Anything-3 is treated as a relative morphology prior, not a metric SEM
 topography measurement:
 
-$$
-d_o(x,y) =
-\begin{cases}
--d(x,y), & \text{if invert\_depth is true} \\
-d(x,y), & \text{otherwise}
-\end{cases}
-$$
+If `invert_depth` is true:
+
+$$d_o(x,y) = -d(x,y)$$
+
+Otherwise:
+
+$$d_o(x,y) = d(x,y)$$
 
 The oriented depth is shifted by a low percentile:
 
-$$
-d_s(x,y) = d_o(x,y) - Q_{0.01}(d_o)
-$$
+$$d_s(x,y) = d_o(x,y) - Q_{0.01}(d_o)$$
 
 ### Flat-Base Bias Correction
 
 Low regions are used as substrate candidates:
 
-$$
-B = \{(x,y) \mid d_s(x,y) \le Q_p(d_s \text{ in local tile})\}
-$$
+$$B = \{(x,y): d_s(x,y) \le Q_p^{\mathrm{tile}}(d_s)\}$$
 
 A substrate bias surface `b(x,y)` is estimated either by robust polynomial
 fitting or tile interpolation. The corrected field is:
 
-$$
-h_c(x,y) = \max(d_s(x,y) - b(x,y) - f_{base}(x,y), 0)
-$$
+$$h_c(x,y) = \max(d_s(x,y) - b(x,y) - f_{\mathrm{base}}(x,y), 0)$$
 
 where `f_base` is the global or tiled base-lock floor.
 
@@ -245,13 +229,9 @@ where `f_base` is the global or tiled base-lock floor.
 
 The corrected morphology is mapped to the known nanowall height scale:
 
-$$
-\alpha = \frac{H_{target}}{Q_p(h_c \mid h_c > 0)}
-$$
+$$\alpha = \frac{H_{\mathrm{target}}}{Q_p(h_c : h_c > 0)}$$
 
-$$
-h_{um}(x,y) = \alpha h_c(x,y)
-$$
+$$h_{\mathrm{um}}(x,y) = \alpha h_c(x,y)$$
 
 For the current sample, `H_target = 1.7 um`.
 
@@ -260,17 +240,9 @@ For the current sample, `H_target = 1.7 um`.
 SEM-bright nanowall edges can be constrained to a maximum band rather than a
 constant value. With target height `H` and negative tolerance `tau`,
 
-$$
-H_{low} = H(1-\tau)
-$$
+$$H_{\mathrm{low}} = H(1-\tau)$$
 
-$$
-h_{edge}(x,y)
-= H_{low}
-+ r(x,y)(H-H_{low}),
-\qquad
-0 \le r(x,y) \le 1
-$$
+$$h_{\mathrm{edge}}(x,y) = H_{\mathrm{low}} + r(x,y)(H-H_{\mathrm{low}}), \qquad 0 \le r(x,y) \le 1$$
 
 Thus edge values are based on their existing pixel values, capped by `H`, and
 allowed to vary only downward.
@@ -298,39 +270,29 @@ The resulting surface can be checked interactively through
 
 For stride `k`, the transport grid spacing is:
 
-$$
-\Delta = k \Delta x
-$$
+$$\Delta = k \Delta x$$
 
 The downsampled height uses block maxima:
 
-$$
-h_k(I,J)
-= \max_{(x,y)\in block(I,J)} h_{um}(x,y)
-$$
+$$h_k(I,J) = \max_{(x,y)\in \mathrm{block}(I,J)} h_{\mathrm{um}}(x,y)$$
 
 Voxel centers are:
 
-$$
-z_l = \left(l + \frac{1}{2}\right)\Delta
-$$
+$$z_l = \left(l + \frac{1}{2}\right)\Delta$$
 
 The solid mask is:
 
-$$
-\Omega_s(l,J,I)
-=
-\begin{cases}
-1, & z_l \le h_k(I,J) \\
-0, & z_l > h_k(I,J)
-\end{cases}
-$$
+Solid voxels are assigned by:
+
+$$\Omega_s(l,J,I) = 1 \quad \mathrm{if} \quad z_l \le h_k(I,J)$$
+
+and otherwise:
+
+$$\Omega_s(l,J,I) = 0$$
 
 The void region is:
 
-$$
-\Omega_v = \Omega \setminus \Omega_s
-$$
+$$\Omega_v = \Omega \setminus \Omega_s$$
 
 In arrays:
 
@@ -348,41 +310,21 @@ survival, first scattering probability, and ray-surface interactions.
 
 Every void voxel receives equal source mass:
 
-$$
-\phi_{in}(x_i)
-=
-\frac{1}{|\Omega_v|},
-\qquad x_i \in \Omega_v
-$$
+$$\phi_{\mathrm{in}}(x_i) = \frac{1}{|\Omega_v|}, \qquad x_i \in \Omega_v$$
 
 ### Free-Flight Survival
 
-$$
-P_{survive}(d) = \exp\left(-\frac{d}{\lambda}\right)
-$$
+$$P_{\mathrm{survive}}(d) = \exp\left(-\frac{d}{\lambda}\right)$$
 
 ### First Scattering Density
 
-$$
-p(s)
-=
-\frac{1}{\lambda}
-\exp\left(-\frac{s}{\lambda}\right)
-$$
+$$p(s) = \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)$$
 
 ### Probability Decomposition
 
 For a path of length `d`:
 
-$$
-\int_0^d
-\frac{1}{\lambda}
-\exp\left(-\frac{s}{\lambda}\right)
-ds
-+
-\exp\left(-\frac{d}{\lambda}\right)
-= 1
-$$
+$$\int_0^d \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)\,ds + \exp\left(-\frac{d}{\lambda}\right) = 1$$
 
 This decomposes probability into:
 
@@ -394,67 +336,33 @@ This decomposes probability into:
 
 Directions are sampled with a Fibonacci sphere:
 
-$$
-z_m = 1 - \frac{2(m+0.5)}{N}
-$$
+$$z_m = 1 - \frac{2(m+0.5)}{N}$$
 
-$$
-\theta_m = m\pi(3-\sqrt{5})
-$$
+$$\theta_m = m\pi(3-\sqrt{5})$$
 
-$$
-v_m =
-\left(
-\cos\theta_m\sqrt{1-z_m^2},
-\sin\theta_m\sqrt{1-z_m^2},
-z_m
-\right)
-$$
+$$v_m = \bigl(\cos\theta_m\sqrt{1-z_m^2}, \; \sin\theta_m\sqrt{1-z_m^2}, \; z_m\bigr)$$
 
 with equal directional weight:
 
-$$
-w_m = \frac{1}{N}
-$$
+$$w_m = \frac{1}{N}$$
 
 ### DDA Ray Accumulation
 
 For each ray segment `[s_a, s_b]` inside a voxel:
 
-$$
-\Delta F
-=
-\exp\left(-\frac{s_a}{\lambda}\right)
--
-\exp\left(-\frac{s_b}{\lambda}\right)
-$$
+$$\Delta F = \exp\left(-\frac{s_a}{\lambda}\right) - \exp\left(-\frac{s_b}{\lambda}\right)$$
 
 The spatial scattering field accumulates:
 
-$$
-\phi_{scatter}(x)
-\mathrel{+}=
-\phi_{in}(x_i) w_m \Delta F
-$$
+$$\phi_{\mathrm{scatter}}(x) \leftarrow \phi_{\mathrm{scatter}}(x) + \phi_{\mathrm{in}}(x_i) w_m \Delta F$$
 
 If a solid surface is reached at distance `d`:
 
-$$
-\phi_{surface}(x_s)
-\mathrel{+}=
-\phi_{in}(x_i) w_m
-\exp\left(-\frac{d}{\lambda}\right)
-$$
+$$\phi_{\mathrm{surface}}(x_s) \leftarrow \phi_{\mathrm{surface}}(x_s) + \phi_{\mathrm{in}}(x_i) w_m \exp\left(-\frac{d}{\lambda}\right)$$
 
 The primary field used for analysis is:
 
-$$
-\phi_{total}(x)
-=
-\phi_{scatter}(x)
-+
-\phi_{surface}(x)
-$$
+$$\phi_{\mathrm{total}}(x) = \phi_{\mathrm{scatter}}(x) + \phi_{\mathrm{surface}}(x)$$
 
 This is a **voxelwise total accumulated probability mass**, not a directional
 projection and not a z-projection.
@@ -463,30 +371,17 @@ projection and not a z-projection.
 
 When enabled, rays reflect specularly from the computational box:
 
-$$
-v' = v - 2(v\cdot n)n
-$$
+$$v' = v - 2(v\cdot n)n$$
 
 For axis-aligned boundaries this flips the corresponding component:
 
-$$
-v_x'=-v_x,\qquad v_y'=-v_y,\qquad v_z'=-v_z
-$$
+$$v_x'=-v_x, \qquad v_y'=-v_y, \qquad v_z'=-v_z$$
 
 ### Probability Check
 
 The kernel reports:
 
-$$
-\sum_x \phi_{scatter}(x)
-+
-\sum_x \phi_{surface}(x)
-+
-M_{escape}
-+
-M_{lost}
-\approx 1
-$$
+$$\sum_x \phi_{\mathrm{scatter}}(x) + \sum_x \phi_{\mathrm{surface}}(x) + M_{\mathrm{escape}} + M_{\mathrm{lost}} \approx 1$$
 
 ## Run Transport And ParaView Export
 
