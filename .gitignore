@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+.cache/
+build/
+dist/
+*.egg-info/
+
+# Large generated research artifacts
+runs/
+outputs/
+workspace/
+data/raw/
+data/precomputed_depth/
+*.npz
+*.npy
+*.glb
+*.ply
+transport_cpp/transport_dda
+
+# Model caches should live outside version control.
+models/
+checkpoints/

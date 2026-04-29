@@ -1,0 +1,26 @@
+# macOS arm64 runtime for this SEM -> DA3 -> nano-domain workflow.
+# xformers is intentionally omitted: DA3 falls back to a PyTorch SwiGLU implementation
+# and xformers wheels are not generally available for macOS arm64.
+numpy>=1.23,<2
+pillow>=9.0
+torch
+torchvision
+trimesh
+einops
+huggingface_hub
+imageio
+opencv-python
+open3d
+fastapi
+uvicorn
+requests
+typer
+omegaconf
+evo
+e3nn
+moviepy==1.0.3
+plyfile
+pillow_heif
+safetensors
+pycolmap
+pre-commit

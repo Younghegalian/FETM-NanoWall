@@ -1,0 +1,48 @@
+{
+  "crop_px": [731, 377, 1008, 1008],
+  "calibration": {
+    "pixel_size_um": null,
+    "ruler_length_um": 1.0,
+    "ruler_line_px": [1771, 1687, 2375, 1687],
+    "ruler_bbox_px": [100, 920, 300, 60],
+    "ruler_threshold": 0.85
+  },
+  "depth": {
+    "model": "depth-anything/DA3MONO-LARGE",
+    "device": "auto",
+    "process_res": 756,
+    "process_res_method": "upper_bound_resize",
+    "invert_depth": true,
+    "export_da3_debug": false
+  },
+  "bias": {
+    "enabled": true,
+    "surface_method": "tile",
+    "surface_degree": 2,
+    "base_percentile": 12.0,
+    "tile_size_px": 64,
+    "min_samples": 2000,
+    "max_samples": 200000,
+    "mad_sigma": 2.5,
+    "iterations": 4,
+    "zero_percentile": 1.0,
+    "base_lock_enabled": true,
+    "base_lock_method": "tile",
+    "base_lock_percentile": 40.0,
+    "clip_negative": true
+  },
+  "height": {
+    "target_height_um": 1.7,
+    "scale_percentile": 99.5,
+    "cap_height_um": null,
+    "edge_lock_enabled": true,
+    "edge_lock_height_um": 1.7,
+    "edge_lock_mode": "max_band",
+    "edge_lock_negative_tolerance": 0.05,
+    "edge_lock_percentile": 82.0,
+    "edge_lock_background_sigma_px": 18.0,
+    "edge_lock_close_px": 1,
+    "edge_lock_dilate_px": 1,
+    "edge_lock_cap_to_height": true
+  }
+}
