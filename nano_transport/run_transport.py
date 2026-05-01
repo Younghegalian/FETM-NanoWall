@@ -39,6 +39,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-paraview-voxel-mesh", action="store_true")
     parser.add_argument("--skip-paraview-height-mesh", action="store_true")
     parser.add_argument(
+        "--export-metrics",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write transport_metrics.json with scalar integrals and averages.",
+    )
+    parser.add_argument(
+        "--metrics-no-percentiles",
+        action="store_true",
+        help="Skip percentile metrics for faster summaries on very large domains.",
+    )
+    parser.add_argument(
         "--keep-kernel-buffers",
         action="store_true",
         help="Keep intermediate .f32/.u8 files produced by the C++ kernel.",
@@ -119,6 +130,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     metadata_path.write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
 
+    metrics_meta = None
+    if args.export_metrics:
+        metrics_meta = summarize_metrics(
+            transport_npz=npz_path,
+            out_path=out_dir / "transport_metrics.json",
+            no_percentiles=args.metrics_no_percentiles,
+        )
+
     paraview_meta = None
     if args.export_paraview:
         paraview_dir = Path(args.paraview_dir) if args.paraview_dir else out_dir / "paraview"
@@ -138,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
         "metadata": str(metadata_path),
         **meta,
     }
+    if metrics_meta is not None:
+        output["metrics"] = metrics_meta
     if paraview_meta is not None:
         output["paraview"] = paraview_meta
     print(json.dumps(output, indent=2))
@@ -173,6 +194,22 @@ def export_paraview(
         cmd.append("--skip-voxel-mesh")
     if skip_height_mesh:
         cmd.append("--skip-height-mesh")
+    result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+    return json.loads(result.stdout)
+
+
+def summarize_metrics(transport_npz: Path, out_path: Path, no_percentiles: bool) -> dict:
+    script = Path(__file__).resolve().parents[1] / "scripts" / "summarize_transport_metrics.py"
+    cmd = [
+        sys.executable,
+        str(script),
+        "--transport",
+        str(transport_npz),
+        "--out",
+        str(out_path),
+    ]
+    if no_percentiles:
+        cmd.append("--no-percentiles")
     result = subprocess.run(cmd, check=True, text=True, capture_output=True)
     return json.loads(result.stdout)
 

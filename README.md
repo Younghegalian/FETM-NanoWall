@@ -408,11 +408,19 @@ Each run writes:
 ```text
 transport_fields.npz
 metadata.json
+transport_metrics.json
 paraview/transport_fields.vti
 paraview/domain_height_surface.vtk
 paraview/domain_solid_voxel_surface.vtk
 paraview/paraview_export_metadata.json
 ```
+
+`metadata.json` stores run parameters and probability-conservation sums.
+`transport_metrics.json` stores scalar summaries from the 3D fields, including
+raw probability integrals, volume-weighted integrals, projected-area-normalized
+integrals, void/solid means, percentiles, geometry volumes, and probability
+balance. For thin-film-style comparison, `areal_integral_um` is defined as
+`sum(field * voxel_volume_um3) / projected_area_um2`.
 
 ParaView snapshots are useful for comparing complementary transport fields:
 
@@ -434,6 +442,22 @@ paraview/transport_fields.vti
 paraview/domain_height_surface.vtk
 paraview/domain_solid_voxel_surface.vtk
 ```
+
+The reconstructed height surface can also be exported with the aligned SEM crop
+as a texture:
+
+```bash
+.venv/bin/python scripts/export_textured_height_mesh.py \
+  --domain runs/sample_001/domain.npz \
+  --texture runs/sample_001/cropped_input.png \
+  --out-dir runs/sample_001/textured_height_stride2 \
+  --stride 2
+```
+
+This writes `domain_height_sem_textured.obj`, `domain_height_sem_textured.mtl`,
+`domain_height_sem_textured.vtk`, and `sem_texture.png`. Open the OBJ in a mesh
+viewer, or open the VTK surface in ParaView and apply `sem_texture.png` as the
+texture if it is not attached automatically.
 
 If the exact voxel surface mesh is too heavy:
 
