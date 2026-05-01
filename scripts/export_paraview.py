@@ -16,7 +16,16 @@ if str(ROOT) not in sys.path:
 from nano_transport.voxelize import voxelize_height_domain
 
 
-FLOAT_FIELDS = ("phi_total", "phi_scatter", "phi_surface", "accessibility", "vis_ang", "d_min_um")
+FLOAT_FIELDS = (
+    "accessibility",
+    "vis_ang",
+    "d_min_um",
+    "source_scatter_fraction",
+    "source_escape_fraction",
+    "source_lost_fraction",
+    "source_probability_sum",
+    "source_conservation_error",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -143,7 +152,7 @@ def _write_vti_cell_data(
             f'Origin="0 0 0" Spacing="{spacing_um[0]:.12g} {spacing_um[1]:.12g} {spacing_um[2]:.12g}">',
         )
         _write_line(file, f'    <Piece Extent="0 {nx} 0 {ny} 0 {nz}">')
-        _write_line(file, '      <CellData Scalars="phi_total">')
+        _write_line(file, '      <CellData Scalars="accessibility">')
         for name, vtk_type, vtk_offset in arrays:
             _write_line(file, f'        <DataArray type="{vtk_type}" Name="{name}" format="appended" offset="{vtk_offset}"/>')
         _write_line(file, "      </CellData>")

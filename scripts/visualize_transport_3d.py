@@ -38,26 +38,22 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _build_fields(data: np.lib.npyio.NpzFile) -> dict[str, np.ndarray]:
-    scatter = data["phi_scatter"].astype(np.float32)
-    surface = data["phi_surface"].astype(np.float32)
     accessibility = data["accessibility"].astype(np.float32)
     vis_ang = data["vis_ang"].astype(np.float32)
     d_min = data["d_min_um"].astype(np.float32)
+    source_scatter = data["source_scatter_fraction"].astype(np.float32)
+    source_lost = data["source_lost_fraction"].astype(np.float32)
+    source_error = data["source_conservation_error"].astype(np.float32)
     solid = data["mask_solid"].astype(bool)
     void = ~solid
     return {
-        "log10 scatter probability": _log_field(scatter),
-        "log10 surface hit probability": _log_field(surface),
+        "source scatter fraction": np.where(void, source_scatter, np.nan),
         "accessibility": np.where(void, accessibility, np.nan),
+        "source lost fraction": np.where(void, source_lost, np.nan),
+        "source conservation error": np.where(void, source_error, np.nan),
         "angular visibility": np.where(void, vis_ang, np.nan),
         "minimum wall distance (um)": np.where((d_min >= 0) & void, d_min, np.nan),
     }
-
-
-def _log_field(field: np.ndarray) -> np.ndarray:
-    positive = field[field > 0]
-    floor = float(np.percentile(positive, 1.0)) * 1e-2 if positive.size else 1e-30
-    return np.log10(np.maximum(field, floor)).astype(np.float32)
 
 
 def _write_orthogonal_slice_viewer(

@@ -77,7 +77,16 @@ def summarize_transport_metrics(transport_path: Path, *, include_percentiles: bo
     }
 
     fields: dict[str, Any] = {}
-    for name in ("phi_scatter", "phi_surface", "phi_total", "accessibility", "vis_ang", "d_min_um"):
+    for name in (
+        "accessibility",
+        "vis_ang",
+        "d_min_um",
+        "source_scatter_fraction",
+        "source_escape_fraction",
+        "source_lost_fraction",
+        "source_probability_sum",
+        "source_conservation_error",
+    ):
         if name not in data.files:
             continue
         arr = np.asarray(data[name], dtype=np.float64)
@@ -112,24 +121,19 @@ def summarize_transport_metrics(transport_path: Path, *, include_percentiles: bo
                 mask=valid,
                 include_percentiles=include_percentiles,
             )
-        if name in ("phi_surface", "phi_scatter", "phi_total"):
-            event = np.isfinite(arr) & (arr > 0.0)
-            field_info["nonzero"] = _stats(
-                arr,
-                voxel_volume_um3,
-                projected_area_um2,
-                mask=event,
-                include_percentiles=include_percentiles,
-            )
         fields[name] = field_info
         del arr
 
-    scatter_sum = float(fields.get("phi_scatter", {}).get("all", {}).get("sum", meta.get("scatter_sum", 0.0)))
-    surface_sum = float(fields.get("phi_surface", {}).get("all", {}).get("sum", meta.get("surface_sum", 0.0)))
-    total_sum = float(fields.get("phi_total", {}).get("all", {}).get("sum", scatter_sum + surface_sum))
+    scatter_sum = float(meta.get("scatter_sum", fields.get("source_scatter_fraction", {}).get("void", {}).get("mean", 0.0)))
+    accessibility_sum = float(
+        meta.get(
+            "accessibility_sum",
+            fields.get("accessibility", {}).get("void", {}).get("mean", 0.0),
+        )
+    )
     lost_mass = float(meta.get("lost_mass", 0.0))
     escape_mass = float(meta.get("escape_mass", 0.0))
-    probability_sum = total_sum + lost_mass + escape_mass
+    probability_sum = scatter_sum + accessibility_sum + lost_mass + escape_mass
 
     summary = {
         "transport": str(transport_path),
@@ -137,18 +141,26 @@ def summarize_transport_metrics(transport_path: Path, *, include_percentiles: bo
         "lambda_um": meta.get("lambda_um"),
         "xy_stride": meta.get("xy_stride"),
         "n_dir": meta.get("n_dir"),
-        "phi_scatter_sum": scatter_sum,
-        "phi_surface_sum": surface_sum,
-        "phi_total_sum": total_sum,
+        "source_scatter_fraction_global": scatter_sum,
+        "accessibility_global": accessibility_sum,
+        "source_escape_fraction_global": escape_mass,
+        "source_lost_fraction_global": lost_mass,
         "lost_mass": lost_mass,
         "escape_mass": escape_mass,
         "probability_sum": probability_sum,
-        "void_mean_phi_total": fields.get("phi_total", {}).get("void", {}).get("mean"),
+        "void_mean_source_scatter_fraction": fields.get("source_scatter_fraction", {}).get("void", {}).get("mean"),
         "void_mean_accessibility": fields.get("accessibility", {}).get("void", {}).get("mean"),
         "void_accessibility_areal_integral_um": fields.get("accessibility", {}).get("void", {}).get("areal_integral_um"),
+        "void_mean_source_escape_fraction": fields.get("source_escape_fraction", {}).get("void", {}).get("mean"),
+        "void_mean_source_lost_fraction": fields.get("source_lost_fraction", {}).get("void", {}).get("mean"),
         "void_mean_angle_fraction": fields.get("vis_ang", {}).get("void", {}).get("mean"),
         "void_angle_fraction_areal_integral_um": fields.get("vis_ang", {}).get("void", {}).get("areal_integral_um"),
         "valid_void_mean_min_wall_distance_um": fields.get("d_min_um", {}).get("valid_void", {}).get("mean"),
+        "void_source_probability_sum_min": fields.get("source_probability_sum", {}).get("void", {}).get("min"),
+        "void_source_probability_sum_max": fields.get("source_probability_sum", {}).get("void", {}).get("max"),
+        "void_source_probability_sum_mean": fields.get("source_probability_sum", {}).get("void", {}).get("mean"),
+        "void_source_conservation_error_max": fields.get("source_conservation_error", {}).get("void", {}).get("max"),
+        "void_source_conservation_error_mean": fields.get("source_conservation_error", {}).get("void", {}).get("mean"),
     }
 
     return {
@@ -156,8 +168,7 @@ def summarize_transport_metrics(transport_path: Path, *, include_percentiles: bo
         "geometry": geometry,
         "probability_balance": {
             "scatter_sum": scatter_sum,
-            "surface_sum": surface_sum,
-            "total_event_sum": total_sum,
+            "accessibility_sum": accessibility_sum,
             "lost_mass": lost_mass,
             "escape_mass": escape_mass,
             "probability_sum": probability_sum,
@@ -165,11 +176,13 @@ def summarize_transport_metrics(transport_path: Path, *, include_percentiles: bo
         },
         "fields": fields,
         "notes": {
-            "phi_fields": "phi_scatter, phi_surface, and phi_total are voxelwise probability mass fields. Their raw sum is the transport probability integral.",
-            "volume_weighted_integral_um3": "sum(field * voxel_volume_um3). This is useful for scalar fields; for probability mass fields, prefer the raw sum.",
+            "source_budget_fields": "source_scatter_fraction + accessibility + source_escape_fraction + source_lost_fraction should be approximately 1 for each void source voxel.",
+            "volume_weighted_integral_um3": "sum(field * voxel_volume_um3). This is useful for scalar source fields such as accessibility.",
             "areal_integral_um": "sum(field * voxel_volume_um3) / projected_area_um2. This is the preferred thin-film/substrate-normalized integral for scalar fields such as accessibility.",
-            "areal_sum_per_um2": "sum(field) / projected_area_um2. This is mainly diagnostic for probability-mass fields.",
+            "areal_sum_per_um2": "sum(field) / projected_area_um2. This is a diagnostic count-normalized field sum.",
             "accessibility": "Mean direct free-flight surface-arrival probability over sampled directions.",
+            "source_probability_sum": "Per-source scatter + surface + escape + lost fractions. Void values should be approximately 1.",
+            "source_conservation_error": "Absolute error |source_probability_sum - 1| for each source voxel.",
             "vis_ang": "Fraction of sampled directions that reached a solid surface.",
             "d_min_um": "Minimum ray distance from a void voxel to a solid wall; valid_void excludes negative/no-hit values.",
         },

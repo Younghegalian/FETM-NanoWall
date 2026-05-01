@@ -48,22 +48,21 @@ def _copy_png(src: Path, dst: Path) -> None:
 
 def _write_transport_preview(transport_path: Path, out_path: Path) -> None:
     data = np.load(transport_path, allow_pickle=False)
-    scatter = data["phi_scatter"]
-    surface = data["phi_surface"]
     solid = data["mask_solid"]
     accessibility = data["accessibility"]
     vis_ang = data["vis_ang"]
-    d_min = data["d_min_um"]
+    source_scatter = data["source_scatter_fraction"]
+    source_lost = data["source_lost_fraction"]
+    source_error = data["source_conservation_error"]
 
     void = ~solid
-    d_plot = np.where(d_min >= 0, d_min, np.nan)
     panels = [
-        ("log10 scatter xy sum", scatter.sum(axis=0), "magma", True),
-        ("log10 surface xy sum", surface.sum(axis=0), "viridis", True),
+        ("source scatter fraction max z", np.nanmax(np.where(void, source_scatter, np.nan), axis=0), "magma", False),
+        ("accessibility max z", np.nanmax(np.where(void, accessibility, np.nan), axis=0), "viridis", False),
         ("solid column height proxy", solid.sum(axis=0), "gray", False),
-        ("accessibility max z", np.nanmax(np.where(void, accessibility, np.nan), axis=0), "plasma", False),
+        ("source lost fraction max z", np.nanmax(np.where(void, source_lost, np.nan), axis=0), "plasma", False),
         ("angular visibility max z", np.nanmax(np.where(void, vis_ang, np.nan), axis=0), "cividis", False),
-        ("min wall distance min z", np.nanmin(d_plot, axis=0), "cubehelix", False),
+        ("source conservation error max z", np.nanmax(np.where(void, source_error, np.nan), axis=0), "cubehelix", True),
     ]
 
     fig, axes = plt.subplots(2, 3, figsize=(12, 7.4), dpi=170)

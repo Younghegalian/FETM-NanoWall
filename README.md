@@ -43,19 +43,18 @@ inversion, flat-base correction, and edge-height locking near the known `1.7 um`
 scale.
 
 Transport is then computed on the voxelized solid/void geometry. The ParaView
-snapshots below show three complementary fields on the same nanowall domain:
-accessibility, angular visibility, and first-scattering probability. The stored
-primary quantity remains the full voxel field `phi_total[z, y, x]`.
+snapshots below show source-voxel fields on the same nanowall domain:
+accessibility and angular visibility. The stored primary quantity is now the
+source-side budget, where each void source voxel satisfies
+`source_scatter_fraction + accessibility + source_escape_fraction + source_lost_fraction ~= 1`.
 
 <p align="center">
   <img src="docs/assets/paraview_accessibility_surface.png" width="32%" alt="ParaView accessibility surface view">
   <img src="docs/assets/paraview_angle_fraction_surface.png" width="32%" alt="ParaView angle fraction surface view">
-  <img src="docs/assets/paraview_phi_scatter_surface.png" width="32%" alt="ParaView phi scatter surface view">
 </p>
 <p align="center">
   <img src="docs/assets/paraview_accessibility_volume.png" width="32%" alt="ParaView accessibility volume view">
   <img src="docs/assets/paraview_angle_fraction_volume.png" width="32%" alt="ParaView angle fraction volume view">
-  <img src="docs/assets/paraview_phi_scatter_volume.png" width="32%" alt="ParaView phi scatter volume view">
 </p>
 
 ## Process Map
@@ -69,7 +68,7 @@ flowchart LR
     E --> F["Nano physical domain: domain.npz"]
     F --> G["Voxel solid/void domain"]
     G --> H["First-event probabilistic ray transport"]
-    H --> I["Voxel fields: phi_total, phi_scatter, phi_surface"]
+    H --> I["Source-budget fields: accessibility, scatter, escape, lost"]
     I --> J["ParaView VTI/VTK export"]
 ```
 
@@ -346,26 +345,31 @@ with equal directional weight:
 
 $$w_m = \frac{1}{N}$$
 
-### DDA Ray Accumulation
+### DDA Source-Budget Accumulation
 
 For each ray segment `[s_a, s_b]` inside a voxel:
 
 $$\Delta F = \exp\left(-\frac{s_a}{\lambda}\right) - \exp\left(-\frac{s_b}{\lambda}\right)$$
 
-The spatial scattering field accumulates:
+The source voxel accumulates this segment probability as its first-scattering
+fraction:
 
-$$\phi_{\mathrm{scatter}}(x) \leftarrow \phi_{\mathrm{scatter}}(x) + \phi_{\mathrm{in}}(x_i) w_m \Delta F$$
+$$B_{\mathrm{scatter}}(x_i) \leftarrow B_{\mathrm{scatter}}(x_i) + w_m \Delta F$$
 
 If a solid surface is reached at distance `d`:
 
-$$\phi_{\mathrm{surface}}(x_s) \leftarrow \phi_{\mathrm{surface}}(x_s) + \phi_{\mathrm{in}}(x_i) w_m \exp\left(-\frac{d}{\lambda}\right)$$
+$$A(x_i) \leftarrow A(x_i) + w_m \exp\left(-\frac{d}{\lambda}\right)$$
 
-The primary field used for analysis is:
+If a ray escapes the box or is truncated at the maximum ray length, the
+surviving residual probability is stored in `source_escape_fraction` or
+`source_lost_fraction`.
 
-$$\phi_{\mathrm{total}}(x) = \phi_{\mathrm{scatter}}(x) + \phi_{\mathrm{surface}}(x)$$
+For each source voxel `x_i`, the per-source fractions are:
 
-This is a **voxelwise total accumulated probability mass**, not a directional
-projection and not a z-projection.
+$$B_{\mathrm{scatter}}(x_i) + A(x_i) + B_{\mathrm{escape}}(x_i) + B_{\mathrm{lost}}(x_i) \approx 1$$
+
+The current pipeline stores this source-side budget directly and no longer
+exports destination-side probability-deposition fields.
 
 ### Box Reflection
 
@@ -381,7 +385,7 @@ $$v_x'=-v_x, \qquad v_y'=-v_y, \qquad v_z'=-v_z$$
 
 The kernel reports:
 
-$$\sum_x \phi_{\mathrm{scatter}}(x) + \sum_x \phi_{\mathrm{surface}}(x) + M_{\mathrm{escape}} + M_{\mathrm{lost}} \approx 1$$
+$$B_{\mathrm{scatter}}(x_i) + A(x_i) + B_{\mathrm{escape}}(x_i) + B_{\mathrm{lost}}(x_i) \approx 1 \qquad \forall x_i \in \Omega_v$$
 
 ## Run Transport And ParaView Export
 
@@ -427,12 +431,10 @@ ParaView snapshots are useful for comparing complementary transport fields:
 <p align="center">
   <img src="docs/assets/paraview_accessibility_surface.png" width="32%" alt="Accessibility surface view">
   <img src="docs/assets/paraview_angle_fraction_surface.png" width="32%" alt="Angle fraction surface view">
-  <img src="docs/assets/paraview_phi_scatter_surface.png" width="32%" alt="Phi scatter surface view">
 </p>
 <p align="center">
   <img src="docs/assets/paraview_accessibility_volume.png" width="32%" alt="Accessibility volume view">
   <img src="docs/assets/paraview_angle_fraction_volume.png" width="32%" alt="Angle fraction volume view">
-  <img src="docs/assets/paraview_phi_scatter_volume.png" width="32%" alt="Phi scatter volume view">
 </p>
 
 The exact 3D result should be inspected in ParaView from:
@@ -502,7 +504,7 @@ xy_stride = 4
 n_dir = 256
 lambda = 0.10 um
 grid = 217 x 189 x 189
-primary field = phi_total[z, y, x]
+primary field = accessibility[z, y, x]
 ```
 
 ## README Figure Generation
@@ -523,36 +525,32 @@ Regenerate them from the current `runs/sample_001` outputs with:
 
 `transport_fields.npz` contains:
 
-- `phi_total`: voxelwise total event probability, defined as `phi_scatter + phi_surface`.
-- `phi_scatter`: first-scattering probability accumulated in void voxels.
-- `phi_surface`: direct surface-arrival probability accumulated at solid boundary voxels.
 - `accessibility`: source-voxel accessibility based on surviving direct flights to a wall.
 - `vis_ang`: source-voxel angular visibility, shown as `Angle fraction` in ParaView snapshots.
 - `d_min_um`: source-voxel minimum wall-hit distance in `um`.
+- `source_scatter_fraction`: per-source probability fraction whose first event is scattering.
+- `source_escape_fraction`: per-source residual probability escaping the box.
+- `source_lost_fraction`: per-source residual probability left after ray truncation.
+- `source_probability_sum`: per-source sum of scatter, surface, escape, and lost fractions.
+- `source_conservation_error`: `abs(source_probability_sum - 1)` for each source voxel.
 - `mask_solid`: boolean solid/void voxel domain.
 - `metadata_json`: run metadata and probability diagnostics.
 
 ### Field Interpretation
 
-The output fields fall into two groups.
-
-Event-density fields describe where transport probability is deposited after
-launching rays from all void voxels:
-
-| Field | Stored on | Meaning |
-| --- | --- | --- |
-| `phi_scatter` | mostly void cells | Probability that the first event is a scattering event inside that voxel. |
-| `phi_surface` | solid boundary cells | Probability that a ray reaches a solid surface directly before scattering. |
-| `phi_total` | all cells | Combined event density: `phi_scatter + phi_surface`. |
-
-Source-diagnostic fields describe what a ray launched from a given void voxel
-can see:
+All transport outputs are now source-diagnostic fields: they describe what
+happens to probability launched from each void voxel.
 
 | Field | Stored on | Meaning |
 | --- | --- | --- |
 | `accessibility` | void source cells | Direction-averaged direct-arrival survival probability. |
 | `vis_ang` | void source cells | Fraction of sampled directions that hit the nanowall surface. |
 | `d_min_um` | void source cells | Shortest wall-hit distance over all hit directions. |
+| `source_scatter_fraction` | void source cells | Fraction of the source voxel budget going to first scattering. |
+| `source_escape_fraction` | void source cells | Residual fraction escaping through the box boundary. |
+| `source_lost_fraction` | void source cells | Residual fraction beyond the maximum ray distance. |
+| `source_probability_sum` | void source cells | Per-source budget sum; should be approximately `1`. |
+| `source_conservation_error` | void source cells | Per-source absolute conservation error. |
 
 ### Accessibility
 
@@ -604,67 +602,46 @@ Interpretation:
 - `-1` means no hit direction was found for that voxel under the current
   reflection and maximum-distance settings.
 
-### Scattering Probability
+### Source Budget Diagnostics
 
-`phi_scatter(x)` is accumulated along ray segments. For every ray segment
-`[s_a, s_b]` passing through voxel `x`, the deposited probability is:
+`source_scatter_fraction(x_i)` is the direction-averaged probability that the
+first event from source voxel `x_i` is scattering before direct wall arrival:
 
-$$\Delta F = \exp\left(-\frac{s_a}{\lambda}\right) - \exp\left(-\frac{s_b}{\lambda}\right)$$
+$$B_{\mathrm{scatter}}(x_i) = \frac{1}{N}\sum_m \int_0^{d_m} \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)\,ds$$
 
-The accumulated field is:
+`accessibility(x_i)` is the direct surface-arrival fraction, so the source-side
+budget is:
 
-$$\phi_{\mathrm{scatter}}(x) = \sum_{\mathrm{rays\ through\ }x}\phi_{\mathrm{in}}(x_i)w_m\Delta F$$
-
-Interpretation:
-
-- High `phi_scatter`: many first-scattering events are expected inside that
-  voxel.
-- Low `phi_scatter`: few rays pass through that voxel before their first event,
-  or survival probability is already strongly attenuated.
-- This field is volumetric; it is not a surface-only result.
-
-### Surface Arrival Probability
-
-`phi_surface(x_s)` is accumulated when a ray reaches a solid boundary voxel
-before scattering:
-
-$$\phi_{\mathrm{surface}}(x_s) = \sum_{\mathrm{hits\ at\ }x_s}\phi_{\mathrm{in}}(x_i)w_m\exp\left(-\frac{d}{\lambda}\right)$$
+$$B_{\mathrm{scatter}}(x_i) + A(x_i) + B_{\mathrm{escape}}(x_i) + B_{\mathrm{lost}}(x_i) \approx 1$$
 
 Interpretation:
 
-- High `phi_surface`: the surface voxel is frequently reached by direct
-  free-flight paths.
-- Low `phi_surface`: the surface is shadowed, geometrically hard to reach, or
-  reached only after long attenuated paths.
+- `source_scatter_fraction`: probability budget consumed by first scattering.
+- `accessibility`: probability budget arriving directly at a wall surface.
+- `source_escape_fraction`: residual probability leaving the box.
+- `source_lost_fraction`: residual probability remaining after ray truncation.
+- `source_probability_sum`: per-source budget closure; should be close to `1`.
+- `source_conservation_error`: numerical error of the per-source closure.
 
-### Total Event Field
-
-`phi_total` is the combined event-density field:
-
-$$\phi_{\mathrm{total}}(x) = \phi_{\mathrm{scatter}}(x) + \phi_{\mathrm{surface}}(x)$$
-
-Use `phi_total` when a single scalar field is needed for total first-event
-activity. Use `phi_scatter` and `phi_surface` separately when volume scattering
-and wall arrival should be interpreted independently.
-
-### Probability Diagnostics
+### Global Diagnostics
 
 The metadata reports:
 
 ```text
 scatter_sum
-surface_sum
+accessibility_sum
 escape_mass
 lost_mass
 probability_sum
 ```
 
-These values check whether probability is conserved:
+These values are source-mass-weighted means of the per-source budget fields and
+check whether the ensemble probability is conserved:
 
-$$\sum_x \phi_{\mathrm{scatter}}(x) + \sum_x \phi_{\mathrm{surface}}(x) + M_{\mathrm{escape}} + M_{\mathrm{lost}} \approx 1$$
+$$\langle B_{\mathrm{scatter}} + A + B_{\mathrm{escape}} + B_{\mathrm{lost}}\rangle_{\Omega_v} \approx 1$$
 
-For the current high-resolution run, `probability_sum` is numerically very close
-to `1`, so the ray decomposition is behaving consistently.
+For each run, `source_probability_sum` and `source_conservation_error` show the
+same check voxel by voxel.
 
 ParaView fields in `transport_fields.vti` use cell data with array layout:
 

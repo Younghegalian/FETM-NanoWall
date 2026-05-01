@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("MPLCONFIGDIR", str(ROOT / ".cache" / "matplotlib"))
 
 import matplotlib
 
@@ -24,22 +28,21 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     data = np.load(path, allow_pickle=False)
-    scatter = data["phi_scatter"]
-    surface = data["phi_surface"]
     solid = data["mask_solid"]
     accessibility = data["accessibility"]
     vis_ang = data["vis_ang"]
-    d_min = data["d_min_um"]
+    source_scatter = data["source_scatter_fraction"]
+    source_lost = data["source_lost_fraction"]
+    source_error = data["source_conservation_error"]
 
     void = ~solid
-    d_plot = np.where(d_min >= 0, d_min, np.nan)
     panels = [
-        ("scatter xy sum", scatter.sum(axis=0), "magma", True),
-        ("surface xy sum", surface.sum(axis=0), "viridis", True),
+        ("source scatter fraction max z", np.nanmax(np.where(void, source_scatter, np.nan), axis=0), "magma", False),
+        ("accessibility max z", np.nanmax(np.where(void, accessibility, np.nan), axis=0), "viridis", False),
         ("solid column height proxy", solid.sum(axis=0), "gray", False),
-        ("accessibility max z", np.nanmax(np.where(void, accessibility, np.nan), axis=0), "plasma", False),
+        ("source lost fraction max z", np.nanmax(np.where(void, source_lost, np.nan), axis=0), "plasma", False),
         ("angular visibility max z", np.nanmax(np.where(void, vis_ang, np.nan), axis=0), "cividis", False),
-        ("min wall distance min z", np.nanmin(d_plot, axis=0), "cubehelix", False),
+        ("source conservation error max z", np.nanmax(np.where(void, source_error, np.nan), axis=0), "cubehelix", True),
     ]
 
     fig, axes = plt.subplots(2, 3, figsize=(13, 8), dpi=170)

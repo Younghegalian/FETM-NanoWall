@@ -97,18 +97,20 @@ def main(argv: list[str] | None = None) -> int:
     shape = (nz, ny, nx)
     fields = {
         "mask_solid": domain.mask_solid.astype(np.bool_),
-        "phi_scatter": _read_f32(out_dir / "phi_scatter.f32", shape),
-        "phi_surface": _read_f32(out_dir / "phi_surface.f32", shape),
         "accessibility": _read_f32(out_dir / "accessibility.f32", shape),
         "vis_ang": _read_f32(out_dir / "vis_ang.f32", shape),
         "d_min_um": _read_f32(out_dir / "d_min_um.f32", shape),
+        "source_scatter_fraction": _read_f32(out_dir / "source_scatter_fraction.f32", shape),
+        "source_escape_fraction": _read_f32(out_dir / "source_escape_fraction.f32", shape),
+        "source_lost_fraction": _read_f32(out_dir / "source_lost_fraction.f32", shape),
+        "source_probability_sum": _read_f32(out_dir / "source_probability_sum.f32", shape),
+        "source_conservation_error": _read_f32(out_dir / "source_conservation_error.f32", shape),
     }
-    fields["phi_total"] = fields["phi_scatter"] + fields["phi_surface"]
     meta = {
         "source_domain": str(args.domain),
         "source_mode": "uniform_void",
-        "primary_field": "phi_total",
-        "primary_field_definition": "voxelwise total accumulated probability mass: phi_scatter + phi_surface",
+        "primary_field": "accessibility",
+        "primary_field_definition": "source-voxel direct surface-arrival fraction; source_scatter_fraction + accessibility + source_escape_fraction + source_lost_fraction ~= 1",
         "shape_zyx": list(shape),
         "xy_stride": args.xy_stride,
         "dx_um": domain.dx_um,
@@ -216,11 +218,14 @@ def summarize_metrics(transport_npz: Path, out_path: Path, no_percentiles: bool)
 
 def cleanup_kernel_buffers(out_dir: Path) -> None:
     for name in (
-        "phi_scatter.f32",
-        "phi_surface.f32",
         "accessibility.f32",
         "vis_ang.f32",
         "d_min_um.f32",
+        "source_scatter_fraction.f32",
+        "source_escape_fraction.f32",
+        "source_lost_fraction.f32",
+        "source_probability_sum.f32",
+        "source_conservation_error.f32",
         "mask_solid.u8",
     ):
         path = out_dir / name

@@ -21,16 +21,14 @@ struct RayResult {
     bool escaped = false;
     bool lost = false;
     double distance_um = 0.0;
+    double scatter_probability = 0.0;
+    double terminal_probability = 0.0;
 };
 
 struct ThreadLocal {
-    std::vector<double> phi_scatter;
-    std::vector<double> phi_surface;
     double escape_mass = 0.0;
     double lost_mass = 0.0;
     double source_mass_total = 0.0;
-
-    explicit ThreadLocal(size_t n) : phi_scatter(n, 0.0), phi_surface(n, 0.0) {}
 };
 
 static inline size_t index_zyx(int x, int y, int z, int nx, int ny) {
@@ -87,11 +85,7 @@ static RayResult trace_one(
     double lambda_um,
     double max_dist_um,
     int max_reflect,
-    bool use_box_reflect,
-    double source_mass,
-    double dir_weight,
-    std::vector<double>& phi_scatter,
-    std::vector<double>& phi_surface
+    bool use_box_reflect
 ) {
     constexpr double eps = 1e-9;
     Vec3 pos{static_cast<double>(sx) + 0.5, static_cast<double>(sy) + 0.5, static_cast<double>(sz) + 0.5};
@@ -100,21 +94,25 @@ static RayResult trace_one(
     int iz = sz;
     int reflect_count = 0;
     double dist_um = 0.0;
-    const double weight = source_mass * dir_weight;
+    double scatter_probability = 0.0;
 
     while (true) {
         if (ix < 0 || ix >= nx || iy < 0 || iy >= ny || iz < 0 || iz >= nz) {
             RayResult result;
             result.escaped = true;
             result.distance_um = dist_um;
+            result.scatter_probability = scatter_probability;
+            result.terminal_probability = std::exp(-dist_um / lambda_um);
             return result;
         }
         size_t idx = index_zyx(ix, iy, iz, nx, ny);
         if (solid[idx]) {
-            phi_surface[idx] += weight * std::exp(-dist_um / lambda_um);
+            double terminal_probability = std::exp(-dist_um / lambda_um);
             RayResult result;
             result.hit = true;
             result.distance_um = dist_um;
+            result.scatter_probability = scatter_probability;
+            result.terminal_probability = terminal_probability;
             return result;
         }
 
@@ -136,16 +134,20 @@ static RayResult trace_one(
         if (next_dist_um > max_dist_um) {
             double surv_a = std::exp(-dist_um / lambda_um);
             double surv_b = std::exp(-max_dist_um / lambda_um);
-            phi_scatter[idx] += weight * (surv_a - surv_b);
+            double segment_probability = surv_a - surv_b;
+            scatter_probability += segment_probability;
             RayResult result;
             result.lost = true;
             result.distance_um = max_dist_um;
+            result.scatter_probability = scatter_probability;
+            result.terminal_probability = surv_b;
             return result;
         }
 
         double surv_a = std::exp(-dist_um / lambda_um);
         double surv_b = std::exp(-next_dist_um / lambda_um);
-        phi_scatter[idx] += weight * (surv_a - surv_b);
+        double segment_probability = surv_a - surv_b;
+        scatter_probability += segment_probability;
 
         pos.x += dir.x * t_vox;
         pos.y += dir.y * t_vox;
@@ -194,6 +196,8 @@ static RayResult trace_one(
                 RayResult result;
                 result.escaped = true;
                 result.distance_um = dist_um;
+                result.scatter_probability = scatter_probability;
+                result.terminal_probability = std::exp(-dist_um / lambda_um);
                 return result;
             }
         }
@@ -243,6 +247,11 @@ int main(int argc, char** argv) {
     std::vector<double> accessibility(n, 0.0);
     std::vector<double> vis_ang(n, 0.0);
     std::vector<double> d_min_um(n, -1.0);
+    std::vector<double> source_scatter_fraction(n, 0.0);
+    std::vector<double> source_escape_fraction(n, 0.0);
+    std::vector<double> source_lost_fraction(n, 0.0);
+    std::vector<double> source_probability_sum(n, -1.0);
+    std::vector<double> source_conservation_error(n, -1.0);
     auto dirs = fibonacci_sphere(n_dir);
 
     const double source_mass = 1.0 / static_cast<double>(n_void);
@@ -251,7 +260,7 @@ int main(int argc, char** argv) {
     std::vector<ThreadLocal> locals;
     locals.reserve(static_cast<size_t>(n_thread));
     for (int t = 0; t < n_thread; ++t) {
-        locals.emplace_back(n);
+        locals.emplace_back();
     }
     std::vector<std::thread> workers;
     workers.reserve(static_cast<size_t>(n_thread));
@@ -276,6 +285,9 @@ int main(int argc, char** argv) {
                 int hit_count = 0;
                 double access_sum = 0.0;
                 double d_min = std::numeric_limits<double>::infinity();
+                double scatter_fraction = 0.0;
+                double escape_fraction = 0.0;
+                double lost_fraction = 0.0;
                 for (const auto& dir : dirs) {
                     RayResult result = trace_one(
                         x,
@@ -290,20 +302,19 @@ int main(int argc, char** argv) {
                         lambda_um,
                         max_dist_um,
                         max_reflect,
-                        use_box_reflect,
-                        source_mass,
-                        dir_weight,
-                        local.phi_scatter,
-                        local.phi_surface
+                        use_box_reflect
                     );
+                    scatter_fraction += result.scatter_probability * dir_weight;
                     if (result.hit) {
                         ++hit_count;
                         d_min = std::min(d_min, result.distance_um);
-                        access_sum += std::exp(-result.distance_um / lambda_um);
+                        access_sum += result.terminal_probability;
                     } else if (result.escaped) {
-                        local.escape_mass += source_mass * dir_weight * std::exp(-result.distance_um / lambda_um);
+                        local.escape_mass += source_mass * dir_weight * result.terminal_probability;
+                        escape_fraction += result.terminal_probability * dir_weight;
                     } else if (result.lost) {
-                        local.lost_mass += source_mass * dir_weight * std::exp(-max_dist_um / lambda_um);
+                        local.lost_mass += source_mass * dir_weight * result.terminal_probability;
+                        lost_fraction += result.terminal_probability * dir_weight;
                     }
                 }
                 accessibility[src_idx] = access_sum * dir_weight;
@@ -311,6 +322,12 @@ int main(int argc, char** argv) {
                 if (std::isfinite(d_min)) {
                     d_min_um[src_idx] = d_min;
                 }
+                source_scatter_fraction[src_idx] = scatter_fraction;
+                source_escape_fraction[src_idx] = escape_fraction;
+                source_lost_fraction[src_idx] = lost_fraction;
+                double probability_sum = scatter_fraction + accessibility[src_idx] + escape_fraction + lost_fraction;
+                source_probability_sum[src_idx] = probability_sum;
+                source_conservation_error[src_idx] = std::abs(probability_sum - 1.0);
             }
         }
     };
@@ -322,8 +339,6 @@ int main(int argc, char** argv) {
         worker.join();
     }
 
-    std::vector<double> phi_scatter(n, 0.0);
-    std::vector<double> phi_surface(n, 0.0);
     double escape_mass = 0.0;
     double lost_mass = 0.0;
     double source_mass_total = 0.0;
@@ -331,24 +346,39 @@ int main(int argc, char** argv) {
         escape_mass += local.escape_mass;
         lost_mass += local.lost_mass;
         source_mass_total += local.source_mass_total;
-        for (size_t i = 0; i < n; ++i) {
-            phi_scatter[i] += local.phi_scatter[i];
-            phi_surface[i] += local.phi_surface[i];
-        }
     }
 
     double scatter_sum = 0.0;
-    double surface_sum = 0.0;
+    double accessibility_sum = 0.0;
+    double source_probability_sum_min = std::numeric_limits<double>::infinity();
+    double source_probability_sum_max = -std::numeric_limits<double>::infinity();
+    double source_probability_sum_total = 0.0;
+    double source_conservation_error_max = 0.0;
+    double source_conservation_error_total = 0.0;
     for (size_t i = 0; i < n; ++i) {
-        scatter_sum += phi_scatter[i];
-        surface_sum += phi_surface[i];
+        if (!solid[i]) {
+            scatter_sum += source_mass * source_scatter_fraction[i];
+            accessibility_sum += source_mass * accessibility[i];
+            double source_sum = source_probability_sum[i];
+            double source_error = source_conservation_error[i];
+            source_probability_sum_min = std::min(source_probability_sum_min, source_sum);
+            source_probability_sum_max = std::max(source_probability_sum_max, source_sum);
+            source_probability_sum_total += source_sum;
+            source_conservation_error_max = std::max(source_conservation_error_max, source_error);
+            source_conservation_error_total += source_error;
+        }
     }
+    double source_probability_sum_mean = source_probability_sum_total / static_cast<double>(n_void);
+    double source_conservation_error_mean = source_conservation_error_total / static_cast<double>(n_void);
 
-    write_f32(out_dir + "/phi_scatter.f32", phi_scatter);
-    write_f32(out_dir + "/phi_surface.f32", phi_surface);
     write_f32(out_dir + "/accessibility.f32", accessibility);
     write_f32(out_dir + "/vis_ang.f32", vis_ang);
     write_f32(out_dir + "/d_min_um.f32", d_min_um);
+    write_f32(out_dir + "/source_scatter_fraction.f32", source_scatter_fraction);
+    write_f32(out_dir + "/source_escape_fraction.f32", source_escape_fraction);
+    write_f32(out_dir + "/source_lost_fraction.f32", source_lost_fraction);
+    write_f32(out_dir + "/source_probability_sum.f32", source_probability_sum);
+    write_f32(out_dir + "/source_conservation_error.f32", source_conservation_error);
 
     std::cout << std::setprecision(17);
     std::cout << "nx=" << nx << "\n";
@@ -359,9 +389,14 @@ int main(int argc, char** argv) {
     std::cout << "n_thread=" << n_thread << "\n";
     std::cout << "source_mass_total=" << source_mass_total << "\n";
     std::cout << "scatter_sum=" << scatter_sum << "\n";
-    std::cout << "surface_sum=" << surface_sum << "\n";
+    std::cout << "accessibility_sum=" << accessibility_sum << "\n";
     std::cout << "escape_mass=" << escape_mass << "\n";
     std::cout << "lost_mass=" << lost_mass << "\n";
-    std::cout << "probability_sum=" << scatter_sum + surface_sum + escape_mass + lost_mass << "\n";
+    std::cout << "probability_sum=" << scatter_sum + accessibility_sum + escape_mass + lost_mass << "\n";
+    std::cout << "source_probability_sum_min=" << source_probability_sum_min << "\n";
+    std::cout << "source_probability_sum_max=" << source_probability_sum_max << "\n";
+    std::cout << "source_probability_sum_mean=" << source_probability_sum_mean << "\n";
+    std::cout << "source_conservation_error_max=" << source_conservation_error_max << "\n";
+    std::cout << "source_conservation_error_mean=" << source_conservation_error_mean << "\n";
     return 0;
 }
