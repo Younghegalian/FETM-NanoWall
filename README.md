@@ -419,6 +419,17 @@ paraview/domain_solid_voxel_surface.vtk
 paraview/paraview_export_metadata.json
 ```
 
+`domain_height_surface.vtk` depends only on `domain.npz` and `xy_stride`, not on
+MFP. The case wrapper caches it once at:
+
+```text
+runs/sample_001/domain_height_stride<STRIDE>/domain_height_surface.vtk
+```
+
+and links that cached mesh into each case folder. Use `--no-reuse-height-mesh`
+only when an independent copy is needed. `domain_solid_voxel_surface.vtk` is
+optional and is usually skipped for stride-2 runs because it is much larger.
+
 `metadata.json` stores run parameters and probability-conservation sums.
 `transport_metrics.json` stores scalar summaries from the 3D fields, including
 raw probability integrals, volume-weighted integrals, projected-area-normalized
