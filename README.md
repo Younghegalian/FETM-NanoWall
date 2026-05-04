@@ -566,13 +566,35 @@ happens to probability launched from each void voxel.
 ### Accessibility
 
 `accessibility(x_i)` measures how strongly a source voxel is connected to nearby
-solid surfaces by direct free flight. For each sampled direction that hits a
-surface at distance `d_m`, the contribution is the survival probability
-`exp(-d_m/lambda)`. Directions that do not hit a surface contribute zero:
+solid surfaces by direct free flight.
 
-$$A(x_i) = \frac{1}{N}\sum_{m \in H_i}\exp\left(-\frac{d_m}{\lambda}\right)$$
+In the continuous directional model, let `u` be a unit direction on the sphere
+`S^2`. Let `\tau(x_i,u)` be the terminal path length traced from source voxel
+`x_i` in direction `u`, and let `\chi_{\mathrm{wall}}(x_i,u)` be `1` only when
+that terminal event is a solid-wall hit. Then:
 
-where `H_i` is the set of hit directions from source voxel `x_i`.
+$$A(x_i) =
+\frac{1}{4\pi}
+\int_{S^2}
+\chi_{\mathrm{wall}}(x_i,u)
+\exp\left(-\frac{\tau(x_i,u)}{\lambda}\right)
+\,d\Omega(u)$$
+
+The Fibonacci directions used by the code are a quadrature approximation to
+this sphere integral:
+
+$$A(x_i) \approx
+\frac{1}{N}\sum_{m=1}^{N}
+\chi_{\mathrm{wall}}(x_i,u_m)
+\exp\left(-\frac{\tau(x_i,u_m)}{\lambda}\right)
+=
+\frac{1}{N}\sum_{m \in H_i}
+\exp\left(-\frac{d_m}{\lambda}\right)$$
+
+where `H_i` is the set of sampled directions that hit a wall, and `d_m` is the
+wall-hit path length for those directions. Directions that escape or are
+truncated have `\chi_{\mathrm{wall}}=0`, so they contribute nothing to
+`accessibility`.
 
 Interpretation:
 
@@ -616,9 +638,36 @@ Interpretation:
 ### Source Budget Diagnostics
 
 `source_scatter_fraction(x_i)` is the direction-averaged probability that the
-first event from source voxel `x_i` is scattering before direct wall arrival:
+first event from source voxel `x_i` is scattering before the ray terminal event:
 
-$$B_{\mathrm{scatter}}(x_i) = \frac{1}{N}\sum_m \int_0^{d_m} \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)\,ds$$
+$$B_{\mathrm{scatter}}(x_i) =
+\frac{1}{4\pi}
+\int_{S^2}
+\left[
+\int_0^{\tau(x_i,u)}
+\frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)\,ds
+\right]
+\,d\Omega(u)$$
+
+The remaining terminal probability is assigned according to how the ray ends:
+wall hit, box escape, or max-distance truncation. With terminal indicators
+`\chi_{\mathrm{wall}}`, `\chi_{\mathrm{escape}}`, and `\chi_{\mathrm{lost}}`,
+the per-source continuous budget is:
+
+$$
+\frac{1}{4\pi}\int_{S^2}
+\left[
+\int_0^{\tau(x_i,u)}
+\frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)\,ds
++
+\left(
+\chi_{\mathrm{wall}}+\chi_{\mathrm{escape}}+\chi_{\mathrm{lost}}
+\right)
+\exp\left(-\frac{\tau(x_i,u)}{\lambda}\right)
+\right]
+\,d\Omega(u)
+= 1
+$$
 
 `accessibility(x_i)` is the direct surface-arrival fraction, so the source-side
 budget is:

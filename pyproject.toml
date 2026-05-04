@@ -15,6 +15,8 @@ dependencies = [
 
 [project.scripts]
 sem-to-domain = "nano_sem_domain.cli:main"
+gas-particle-hits = "nano_transport.run_particle_hits:main"
+gas-mesh-particle-hits = "nano_transport.run_mesh_particle_hits:main"
 
 [tool.setuptools.packages.find]
 include = ["nano_sem_domain*", "nano_transport*"]
