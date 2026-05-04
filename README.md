@@ -573,23 +573,33 @@ In the continuous directional model, let `u` be a unit direction on the sphere
 `x_i` in direction `u`, and let `\chi_{\mathrm{wall}}(x_i,u)` be `1` only when
 that terminal event is a solid-wall hit. Then:
 
-$$A(x_i) =
+$$
+\begin{aligned}
+A(x_i)
+&=
 \frac{1}{4\pi}
 \int_{S^2}
 \chi_{\mathrm{wall}}(x_i,u)
 \exp\left(-\frac{\tau(x_i,u)}{\lambda}\right)
-\,d\Omega(u)$$
+\,d\Omega(u)
+\end{aligned}
+$$
 
 The Fibonacci directions used by the code are a quadrature approximation to
 this sphere integral:
 
-$$A(x_i) \approx
+$$
+\begin{aligned}
+A(x_i)
+&\approx
 \frac{1}{N}\sum_{m=1}^{N}
 \chi_{\mathrm{wall}}(x_i,u_m)
-\exp\left(-\frac{\tau(x_i,u_m)}{\lambda}\right)
-=
+\exp\left(-\frac{\tau(x_i,u_m)}{\lambda}\right) \\
+&=
 \frac{1}{N}\sum_{m \in H_i}
-\exp\left(-\frac{d_m}{\lambda}\right)$$
+\exp\left(-\frac{d_m}{\lambda}\right)
+\end{aligned}
+$$
 
 where `H_i` is the set of sampled directions that hit a wall, and `d_m` is the
 wall-hit path length for those directions. Directions that escape or are
@@ -640,14 +650,19 @@ Interpretation:
 `source_scatter_fraction(x_i)` is the direction-averaged probability that the
 first event from source voxel `x_i` is scattering before the ray terminal event:
 
-$$B_{\mathrm{scatter}}(x_i) =
+$$
+\begin{aligned}
+B_{\mathrm{scatter}}(x_i)
+&=
 \frac{1}{4\pi}
 \int_{S^2}
 \left[
 \int_0^{\tau(x_i,u)}
 \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)\,ds
 \right]
-\,d\Omega(u)$$
+\,d\Omega(u)
+\end{aligned}
+$$
 
 The remaining terminal probability is assigned according to how the ray ends:
 wall hit, box escape, or max-distance truncation. With terminal indicators
@@ -655,10 +670,15 @@ wall hit, box escape, or max-distance truncation. With terminal indicators
 the per-source continuous budget is:
 
 $$
+\begin{aligned}
+1
+&=
 \frac{1}{4\pi}\int_{S^2}
 \left[
 \int_0^{\tau(x_i,u)}
 \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)\,ds
+\right. \\
+&\qquad\left.
 +
 \left(
 \chi_{\mathrm{wall}}+\chi_{\mathrm{escape}}+\chi_{\mathrm{lost}}
@@ -666,7 +686,7 @@ $$
 \exp\left(-\frac{\tau(x_i,u)}{\lambda}\right)
 \right]
 \,d\Omega(u)
-= 1
+\end{aligned}
 $$
 
 `accessibility(x_i)` is the direct surface-arrival fraction, so the source-side
