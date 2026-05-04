@@ -17,7 +17,9 @@ fields.
 FETM means **First-Event Transport Model**. The project uses
 Depth-Anything-3 as a morphology subtool, then applies SEM-specific calibration,
 flat-base correction, height scaling, voxelization, ray-based transport, and
-ParaView export.
+ParaView export. A separate particle trajectory module, called **Kinetic
+Wall-Flux Simulation (KWFS)**, uses the same reconstructed nanowall mesh to
+estimate wall collision counts and collision rates.
 
 The current target system is:
 
@@ -70,6 +72,8 @@ flowchart LR
     G --> H["First-event probabilistic ray transport"]
     H --> I["Source-budget fields: accessibility, scatter, escape, lost"]
     I --> J["ParaView VTI/VTK export"]
+    F --> K["Kinetic Wall-Flux Simulation"]
+    K --> L["Wall hit counts, collision rates, per-face VTK"]
 ```
 
 ## Repository Layout
@@ -77,8 +81,8 @@ flowchart LR
 ```text
 FETM/
   nano_sem_domain/          SEM calibration, DA3 bridge, height correction
-  nano_transport/           voxelization and transport runner
-  transport_cpp/            C++17 DDA ray-tracing kernel
+  nano_transport/           voxelization, transport runner, KWFS wrapper
+  transport_cpp/            C++17 ray and particle wall-flux kernels
   scripts/                  workflow wrappers and exporters
   docs/assets/              README figures and visual result snapshots
   configs/                  example domain configuration
@@ -456,6 +460,130 @@ paraview/domain_height_surface.vtk
 paraview/domain_solid_voxel_surface.vtk
 ```
 
+## Kinetic Wall-Flux Simulation
+
+**Kinetic Wall-Flux Simulation (KWFS)** is the particle-trajectory counterpart
+to the first-event accessibility field. It runs explicit gas-particle
+trajectories over the same isotropic triangle wall mesh and records wall impact
+counts per triangle.
+
+The model keeps the following physics from the original MATLAB-style particle
+transport setup:
+
+- Maxwellian velocity initialization with gas temperature and molecular mass.
+- Mean free path from pressure:
+
+$$
+\lambda =
+\frac{k_B T}{\sqrt{2}\pi d^2 P}
+$$
+
+- Background gas scattering as an exponential free-flight timer.
+- Triangle-wall collision detection on the reconstructed nanowall mesh.
+- Lambertian wall reflection after a wall hit.
+- Per-face wall hit counts, total collision rate, and area-averaged collision
+  rate.
+
+The current pressure-sweep values used for the MFP cases are:
+
+| `lambda_um` | Pressure (`kPa`) | Pressure (`atm`) |
+| ---: | ---: | ---: |
+| `0.01` | `676.4 kPa` | `6.68 atm` |
+| `0.05` | `135.3 kPa` | `1.34 atm` |
+| `0.10` | `67.6 kPa` | `0.668 atm` |
+| `0.20` | `33.8 kPa` | `0.334 atm` |
+
+`ppm` controls the particle count through the gas molar volume `RT/P`, so at a
+fixed `ppm` lower pressure produces fewer simulated particles.
+
+### KWFS Boundary And Initial Conditions
+
+KWFS supports two initial/restart position modes:
+
+- `uniform`: volume-uniform sampling over the full void region above the local
+  height field.
+- `top`: volume-uniform sampling over the void region above `wall_height_um`.
+
+For both modes, the sampler weights each `(x,y)` column by its allowed void
+height before sampling `z` inside that column. This is important: legacy runs
+before this correction used projected-column-uniform sampling and can over-sample
+high wall/ridge columns in spatial hit maps.
+
+Outer box boundaries are open reservoir boundaries:
+
+- Side escape reinjects at the corresponding side boundary.
+- Top escape reinjects near `z = z_max`.
+- Reinjected particles receive a new Maxwellian velocity and a new background
+  scattering timer.
+
+Wall collisions are counted on the triangle face, the particle is nudged by a
+small surface-normal epsilon, and the outgoing velocity is sampled from a
+Lambertian distribution about the surface normal.
+
+### Running A KWFS Pressure Sweep
+
+Example corrected full-resolution sweep:
+
+```bash
+python3 scripts/run_fullres_pressure_sweep_10us.py \
+  --out-root runs/sample_001/fullres_pressure_sweep_50ppm_5us_volume_uniform \
+  --ppm 50e-6 \
+  --total-time-s 5e-6 \
+  --write-vtk
+```
+
+Each case writes:
+
+```text
+mesh_particle_hits_summary.json
+hit_curve.csv
+surface_face_hits.u64
+mesh_wall_hit_count.vtk
+```
+
+If a run was made with `--skip-vtk` but `surface_face_hits.u64` exists, the VTK
+files can be reconstructed without rerunning trajectories:
+
+```bash
+python3 scripts/write_pressure_sweep_vtks.py \
+  --sweep-dir runs/sample_001/fullres_pressure_sweep_100ppm_10us
+```
+
+### Knudsen / Accessibility / Collision Comparison
+
+For comparing KWFS collision rates against the first-event field, the
+characteristic length is taken as:
+
+$$
+L_c = \frac{4V_{\mathrm{void}}}{A_{\mathrm{wall}}}
+$$
+
+and:
+
+$$
+Kn = \frac{\lambda}{L_c}
+$$
+
+The comparison script joins:
+
+- `Kn`
+- areal accessibility, `void_accessibility_areal_integral_um`
+- per-particle collision rate, `collision_rate_s_inv / n_particle`
+
+Run:
+
+```bash
+python3 scripts/plot_knudsen_accessibility_collision.py \
+  --sweep-dir runs/sample_001/fullres_pressure_sweep_50ppm_5us_volume_uniform
+```
+
+Outputs:
+
+```text
+knudsen_accessibility_collision.csv
+knudsen_accessibility_collision.png
+```
+
 The reconstructed height surface can also be exported with the aligned SEM crop
 as a texture:
 
@@ -614,6 +742,35 @@ Interpretation:
   not hit a wall within the configured ray budget.
 - In ParaView, this is useful for finding geometrically exposed void channels
   and wall-adjacent transport corridors.
+
+For thin-film comparisons, the preferred scalar summary is the
+projected-area-normalized volume integral, also called **areal accessibility**:
+
+$$
+\begin{aligned}
+A_{\mathrm{areal}}
+&=
+\frac{1}{A_{\mathrm{proj}}}
+\int_{\Omega_{\mathrm{void}}}
+A(\mathbf{x})
+\,dV
+\end{aligned}
+$$
+
+On the voxel grid this is computed as:
+
+$$
+\begin{aligned}
+A_{\mathrm{areal}}
+&\approx
+\frac{1}{A_{\mathrm{proj}}}
+\sum_{i\in\Omega_{\mathrm{void}}}
+A_i\,\Delta V
+\end{aligned}
+$$
+
+Because `A_i` is dimensionless, `A_areal` has units of length. In output files
+this is stored as `void_accessibility_areal_integral_um`.
 
 ### Angular Visibility / Angle Fraction
 

@@ -20,9 +20,13 @@ CASES = (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the full-resolution 100 ppm pressure sweep for 10 us.")
+    parser = argparse.ArgumentParser(description="Run a full-resolution pressure sweep.")
     parser.add_argument("--domain", default="runs/sample_001/domain.npz")
     parser.add_argument("--out-root", default="runs/sample_001/fullres_pressure_sweep_100ppm_10us")
+    parser.add_argument("--ppm", type=float, default=100e-6)
+    parser.add_argument("--total-time-s", type=float, default=1e-5)
+    parser.add_argument("--dt-s", type=float, default=3e-12)
+    parser.add_argument("--write-vtk", action="store_true", help="Write per-face VTK hit-count files.")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--kernel", default="/private/tmp/mesh_particle_hits_3d_test")
     parser.add_argument("--mesh-kernel", default="/private/tmp/height_isosurface_test")
@@ -40,6 +44,7 @@ def main() -> int:
 
     with log_path.open("a", encoding="utf-8") as log:
         log.write(f"\n=== sweep start {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+        log.write(f"[config] ppm={args.ppm:.12g} total_time_s={args.total_time_s:.12g} dt_s={args.dt_s:.12g} write_vtk={args.write_vtk}\n")
         for case, pressure_pa in CASES:
             case_dir = out_root / case
             summary_path = case_dir / "mesh_particle_hits_summary.json"
@@ -63,14 +68,13 @@ def main() -> int:
                 "--z-padding-um",
                 "0.2",
                 "--ppm",
-                "100e-6",
+                f"{args.ppm:.12g}",
                 "--total-time-s",
-                "1e-5",
+                f"{args.total_time_s:.12g}",
                 "--dt-s",
-                "3e-12",
+                f"{args.dt_s:.12g}",
                 "--curve-interval-steps",
                 str(args.curve_interval_steps),
-                "--skip-vtk",
                 "--pressure-pa",
                 f"{pressure_pa:.12g}",
                 "--kernel",
@@ -80,6 +84,8 @@ def main() -> int:
                 "--seed",
                 str(args.seed),
             ]
+            if not args.write_vtk:
+                cmd.append("--skip-vtk")
             log.write(f"[run] {case} pressure_pa={pressure_pa:.12g}\n")
             log.flush()
             started = time.perf_counter()

@@ -44,6 +44,11 @@ struct Particle {
     double next_bg_collision_s = 0.0;
 };
 
+struct PositionSampler {
+    double uniform_max_span_um = 0.0;
+    double top_max_span_um = 0.0;
+};
+
 struct AccelGrid {
     int nx = 1;
     int ny = 1;
@@ -136,6 +141,19 @@ static double height_at(const std::vector<float>& height, double x_um, double y_
     double h01 = static_cast<double>(height[hidx(x0, y1, nx)]);
     double h11 = static_cast<double>(height[hidx(x1, y1, nx)]);
     return (1.0 - wx) * (1.0 - wy) * h00 + wx * (1.0 - wy) * h10 + (1.0 - wx) * wy * h01 + wx * wy * h11;
+}
+
+static PositionSampler build_position_sampler(const std::vector<float>& height, double zmax_um, double wall_height_um) {
+    constexpr double eps = 1e-7;
+    PositionSampler sampler;
+    for (float value : height) {
+        double lower = static_cast<double>(value) + eps;
+        sampler.uniform_max_span_um = std::max(sampler.uniform_max_span_um, zmax_um - lower);
+        sampler.top_max_span_um = std::max(sampler.top_max_span_um, zmax_um - std::max(lower, wall_height_um));
+    }
+    sampler.uniform_max_span_um = std::max(0.0, sampler.uniform_max_span_um);
+    sampler.top_max_span_um = std::max(0.0, sampler.top_max_span_um);
+    return sampler;
 }
 
 static std::vector<Triangle> build_triangles(const std::vector<Vec3>& vertices, const std::vector<int32_t>& faces) {
@@ -402,6 +420,7 @@ static double draw_bg_timer(std::mt19937_64& rng, double lambda_um, Vec3 vel_um_
 static Vec3 sample_position(
     std::mt19937_64& rng,
     const std::vector<float>& height,
+    const PositionSampler& sampler,
     int nx,
     int ny,
     double dx_um,
@@ -413,6 +432,10 @@ static Vec3 sample_position(
     double xmax = static_cast<double>(nx) * dx_um;
     double ymax = static_cast<double>(ny) * dx_um;
     constexpr double eps = 1e-7;
+    double max_span = init_mode == "top" ? sampler.top_max_span_um : sampler.uniform_max_span_um;
+    if (max_span <= 0.0) {
+        throw std::runtime_error("empty initial sampling volume");
+    }
     for (int attempt = 0; attempt < 100000; ++attempt) {
         double x = uni(rng) * xmax;
         double y = uni(rng) * ymax;
@@ -424,7 +447,11 @@ static Vec3 sample_position(
         if (z0 >= zmax_um) {
             continue;
         }
-        double z = z0 + uni(rng) * (zmax_um - z0);
+        double span = zmax_um - z0;
+        if (uni(rng) * max_span > span) {
+            continue;
+        }
+        double z = z0 + uni(rng) * span;
         return {x, y, z};
     }
     throw std::runtime_error("failed to sample a void particle position");
@@ -433,6 +460,7 @@ static Vec3 sample_position(
 static Vec3 sample_boundary_position(
     std::mt19937_64& rng,
     const std::vector<float>& height,
+    const PositionSampler& sampler,
     int nx,
     int ny,
     double dx_um,
@@ -465,13 +493,14 @@ static Vec3 sample_boundary_position(
             return {x, y, z};
         }
     }
-    return sample_position(rng, height, nx, ny, dx_um, zmax_um, "uniform", 0.0);
+    return sample_position(rng, height, sampler, nx, ny, dx_um, zmax_um, "uniform", 0.0);
 }
 
 static void reset_particle(
     Particle& p,
     std::mt19937_64& rng,
     const std::vector<float>& height,
+    const PositionSampler& sampler,
     int nx,
     int ny,
     double dx_um,
@@ -481,7 +510,7 @@ static void reset_particle(
     double sigma_um_s,
     double lambda_um
 ) {
-    p.pos_um = sample_position(rng, height, nx, ny, dx_um, zmax_um, init_mode, wall_height_um);
+    p.pos_um = sample_position(rng, height, sampler, nx, ny, dx_um, zmax_um, init_mode, wall_height_um);
     p.vel_um_s = random_velocity(rng, sigma_um_s);
     p.next_bg_collision_s = draw_bg_timer(rng, lambda_um, p.vel_um_s);
 }
@@ -529,6 +558,7 @@ int main(int argc, char** argv) {
     curve_interval_steps = std::max(1, curve_interval_steps);
 
     auto height = read_binary<float>(height_path, static_cast<size_t>(nx) * static_cast<size_t>(ny));
+    auto position_sampler = build_position_sampler(height, zmax_um, wall_height_um);
     auto raw_vertices = read_binary<float>(vertices_path, n_vertex * 3);
     auto faces = read_binary<int32_t>(faces_path, n_face * 3);
     std::vector<Vec3> vertices(n_vertex);
@@ -551,7 +581,20 @@ int main(int argc, char** argv) {
     std::mt19937_64 rng(seed);
     std::vector<Particle> particles(static_cast<size_t>(n_particle));
     for (auto& p : particles) {
-        reset_particle(p, rng, height, nx, ny, dx_um, zmax_um, init_mode, wall_height_um, sigma_um_s, lambda_um);
+        reset_particle(
+            p,
+            rng,
+            height,
+            position_sampler,
+            nx,
+            ny,
+            dx_um,
+            zmax_um,
+            init_mode,
+            wall_height_um,
+            sigma_um_s,
+            lambda_um
+        );
     }
 
     std::vector<uint64_t> face_hits(n_face, 0);
@@ -575,7 +618,20 @@ int main(int argc, char** argv) {
             while (remaining_s > 0.0) {
                 double local_h = height_at(height, p.pos_um.x, p.pos_um.y, nx, ny, dx_um);
                 if (p.pos_um.z <= local_h) {
-                    reset_particle(p, rng, height, nx, ny, dx_um, zmax_um, init_mode, wall_height_um, sigma_um_s, lambda_um);
+                    reset_particle(
+                        p,
+                        rng,
+                        height,
+                        position_sampler,
+                        nx,
+                        ny,
+                        dx_um,
+                        zmax_um,
+                        init_mode,
+                        wall_height_um,
+                        sigma_um_s,
+                        lambda_um
+                    );
                     ++total_deep_resets;
                     reset_this_step = true;
                     remaining_s = 0.0;
@@ -597,7 +653,7 @@ int main(int argc, char** argv) {
                 );
 
                 if (hit.escaped) {
-                    p.pos_um = sample_boundary_position(rng, height, nx, ny, dx_um, zmax_um, hit.pos);
+                    p.pos_um = sample_boundary_position(rng, height, position_sampler, nx, ny, dx_um, zmax_um, hit.pos);
                     p.vel_um_s = random_velocity(rng, sigma_um_s);
                     p.next_bg_collision_s = draw_bg_timer(rng, lambda_um, p.vel_um_s);
                     ++total_escapes;
@@ -616,7 +672,20 @@ int main(int argc, char** argv) {
                     p.vel_um_s = lambertian_velocity(rng, hit.normal, sigma_um_s);
                     ++bounces;
                     if (bounces >= max_surface_bounces_per_step) {
-                        reset_particle(p, rng, height, nx, ny, dx_um, zmax_um, init_mode, wall_height_um, sigma_um_s, lambda_um);
+                        reset_particle(
+                            p,
+                            rng,
+                            height,
+                            position_sampler,
+                            nx,
+                            ny,
+                            dx_um,
+                            zmax_um,
+                            init_mode,
+                            wall_height_um,
+                            sigma_um_s,
+                            lambda_um
+                        );
                         ++total_stuck_resets;
                         reset_this_step = true;
                         remaining_s = 0.0;
