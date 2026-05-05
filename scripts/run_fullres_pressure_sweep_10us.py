@@ -118,6 +118,9 @@ def write_report(out_root: Path) -> None:
             hits = np.memmap(hits_path, dtype=np.uint64, mode="r")
             hit_sum = int(hits.sum())
         timing = summary.get("timing_s", {})
+        particle_diag = summary.get("particle_diagnostics", {})
+        hit_counts = particle_diag.get("hit_counts", {})
+        max_burst = particle_diag.get("max_wall_burst_counts", {})
         rows.append(
             {
                 "case": case,
@@ -140,6 +143,17 @@ def write_report(out_root: Path) -> None:
                 "kernel_wall_s": timing.get("kernel_wall"),
                 "particle_steps_per_wall_s": timing.get("particle_steps_per_wall_s"),
                 "hit_sum_check": hit_sum,
+                "particle_hit_mean": hit_counts.get("mean"),
+                "particle_hit_p50": hit_counts.get("p50"),
+                "particle_hit_p90": hit_counts.get("p90"),
+                "particle_hit_p99": hit_counts.get("p99"),
+                "particle_hit_p999": hit_counts.get("p999"),
+                "particle_hit_max": hit_counts.get("max"),
+                "particle_hit_gini": hit_counts.get("gini"),
+                "particle_hit_top_1pct_fraction": hit_counts.get("top_1pct_fraction"),
+                "particle_hit_top_5pct_fraction": hit_counts.get("top_5pct_fraction"),
+                "particle_max_burst_p99": max_burst.get("p99"),
+                "particle_max_burst_max": max_burst.get("max"),
             }
         )
     if not rows:

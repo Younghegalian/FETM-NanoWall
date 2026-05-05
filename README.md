@@ -325,15 +325,39 @@ $$p(s) = \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)$$
 
 ### Probability Decomposition
 
-For a path of length `d`:
+For one traced direction, let `tau` be the terminal path length. The terminal
+event is one of wall hit, box escape, or max-distance truncation. Along that
+direction:
 
-$$\int_0^d \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)\,ds + \exp\left(-\frac{d}{\lambda}\right) = 1$$
+$$
+\int_0^{\tau}
+\frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)\,ds
++
+\exp\left(-\frac{\tau}{\lambda}\right)
+=1
+$$
 
-This decomposes probability into:
+The integral is the probability that the first event is background scattering
+before the terminal event. The surviving residual is assigned according to how
+the ray terminates:
 
-- scattering within the void volume
-- direct surface arrival
-- optional lost mass when the ray reaches the truncation distance
+$$
+\begin{aligned}
+1
+&=
+B_{\mathrm{scatter}}(x_i,u)
++
+\chi_{\mathrm{wall}}(x_i,u)\exp\left(-\frac{\tau}{\lambda}\right) \\
+&\quad+
+\chi_{\mathrm{escape}}(x_i,u)\exp\left(-\frac{\tau}{\lambda}\right)
++
+\chi_{\mathrm{lost}}(x_i,u)\exp\left(-\frac{\tau}{\lambda}\right)
+\end{aligned}
+$$
+
+`lost` is a ray-truncation residual: the ray reached the configured maximum
+length before wall hit or box escape. It is not a separate physical reaction
+pathway.
 
 ### Direction Sampling
 
@@ -368,7 +392,7 @@ If a ray escapes the box or is truncated at the maximum ray length, the
 surviving residual probability is stored in `source_escape_fraction` or
 `source_lost_fraction`.
 
-For each source voxel `x_i`, the per-source fractions are:
+After averaging over directions, each source voxel `x_i` has the budget:
 
 $$B_{\mathrm{scatter}}(x_i) + A(x_i) + B_{\mathrm{escape}}(x_i) + B_{\mathrm{lost}}(x_i) \approx 1$$
 
@@ -546,10 +570,30 @@ particle_hits_summary.json
 hit_curve.csv
 face_hits.u64
 wall_hit_count.vtk
+particle_hit_counts.u32
+particle_escape_counts.u32
+particle_bg_scatter_counts.u32
+particle_stuck_reset_counts.u32
+particle_max_wall_burst_counts.u32
 ```
 
 Use `--write-vtk` for ParaView output. Without it, the compact binary
 `face_hits.u64` is still written for reporting and post-processing.
+
+Optional post-processing writes per-particle-normalized wall-hit VTK files:
+
+```bash
+python3 scripts/write_wall_hit_per_particle_vtks.py \
+  runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us/lambda_0p01 \
+  runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us/lambda_0p05 \
+  runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us/lambda_0p10 \
+  runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us/lambda_0p20
+```
+
+This creates `wall_hit_count_per_particle.vtk` with scalar
+`hit_count_per_particle = hit_count / n_particle`. The common ParaView color
+range for the current sweep is stored in
+`wall_hit_count_per_particle_vtk_range.json`.
 
 ### Knudsen / Accessibility / Collision Comparison
 
@@ -602,6 +646,31 @@ Only void voxels are included because gas particles do not occupy solid voxels.
 This quantity has the same unit as `R_KWFS`, but it is a source-field estimate,
 not a trajectory count.
 
+The KCR chart reports the model gap with the particle simulation as the
+reference:
+
+$$
+\mathrm{error}_{\mathrm{particle}}
+=
+100\,
+\frac{R_{\mathrm{KWFS}}-\langle \mathrm{KCR}\rangle_{\Omega_v}}
+{R_{\mathrm{KWFS}}}
+$$
+
+For the current `50 ppm`, `5 us` sweep:
+
+| `lambda_um` | `<KCR>_void` (`s^-1`) | `R_KWFS` (`s^-1`) | particle-reference error |
+| ---: | ---: | ---: | ---: |
+| `0.01` | `1.989e9` | `2.233e9` | `10.9%` |
+| `0.05` | `1.624e9` | `2.074e9` | `21.7%` |
+| `0.10` | `1.304e9` | `1.956e9` | `33.4%` |
+| `0.20` | `9.307e8` | `1.853e9` | `49.8%` |
+
+The increasing gap should be interpreted as dynamic enhancement from trajectory
+history: wall reflection, repeated contacts, residence bias, and non-uniform
+particle sampling. KCR is therefore a deterministic first-contact baseline, not
+a replacement for the particle simulation.
+
 Run:
 
 ```bash
@@ -616,6 +685,22 @@ knudsen_accessibility_collision.csv
 knudsen_accessibility_collision.png
 knudsen_kcr_collision.png
 ```
+
+Side-projection diagnostic maps can be regenerated with a shared legend and
+optional per-particle normalization:
+
+```bash
+python3 scripts/plot_wall_hit_side_projection_sweep.py \
+  runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us/lambda_0p01 \
+  runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us/lambda_0p05 \
+  runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us/lambda_0p10 \
+  runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us/lambda_0p20 \
+  --normalize-by-particles \
+  --write-case-plots
+```
+
+This produces `wall_hit_side_projection_per_particle_summary.png` and one
+`wall_hit_side_projection_per_particle.png` per case.
 
 The reconstructed height surface can also be exported with the aligned SEM crop
 as a texture:
@@ -663,20 +748,24 @@ Core files:
 ```text
 runs/sample_001/domain.npz
 runs/sample_001/height_um.npy
-runs/sample_001/transport_lambda_0p10_stride4_dir256/transport_fields.npz
-runs/sample_001/transport_lambda_0p10_stride4_dir256/paraview/transport_fields.vti
-runs/sample_001/transport_lambda_0p10_stride4_dir256/paraview/domain_height_surface.vtk
-runs/sample_001/transport_lambda_0p10_stride4_dir256/paraview/domain_solid_voxel_surface.vtk
+runs/sample_001/transport_lambda_0p10_stride2_dir256/transport_fields.npz
+runs/sample_001/transport_lambda_0p10_stride2_dir256/paraview/transport_fields.vti
+runs/sample_001/transport_lambda_0p10_stride2_dir256/paraview/domain_height_surface.vtk
+runs/sample_001/transport_lambda_0p10_stride2_dir256/paraview/domain_solid_voxel_surface.vtk
+runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us/pressure_sweep_report.csv
+runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us/knudsen_kcr_collision.png
 ```
 
 Current final transport run:
 
 ```text
-xy_stride = 4
+xy_stride = 2
 n_dir = 256
 lambda = 0.10 um
-grid = 217 x 189 x 189
+grid = 432 x 378 x 378
 primary field = accessibility[z, y, x]
+derived field = kinetic_contact_rate_s_inv[z, y, x]
+KWFS sweep = 50 ppm, 5 us, lambda = 0.01/0.05/0.10/0.20 um
 ```
 
 ## README Figure Generation
@@ -699,6 +788,7 @@ Regenerate them from the current `runs/sample_001` outputs with:
 
 - `accessibility`: source-voxel accessibility based on surviving direct flights to a wall.
 - `kinetic_contact_rate_s_inv`: Kinetic Contact Rate, `accessibility * v_mean / lambda`.
+- `time_weighted_accessibility_s_inv`: deprecated alias of `kinetic_contact_rate_s_inv`.
 - `vis_ang`: source-voxel angular visibility, shown as `Angle fraction` in ParaView snapshots.
 - `d_min_um`: source-voxel minimum wall-hit distance in `um`.
 - `source_scatter_fraction`: per-source probability fraction whose first event is scattering.
@@ -718,6 +808,7 @@ happens to probability launched from each void voxel.
 | --- | --- | --- |
 | `accessibility` | void source cells | Direction-averaged direct-arrival survival probability. |
 | `kinetic_contact_rate_s_inv` | void source cells | Kinetic Contact Rate, `accessibility * v_mean / lambda`; a rate field in `s^-1`. |
+| `time_weighted_accessibility_s_inv` | void source cells | Deprecated compatibility alias of `kinetic_contact_rate_s_inv`. |
 | `vis_ang` | void source cells | Fraction of sampled directions that hit the nanowall surface. |
 | `d_min_um` | void source cells | Shortest wall-hit distance over all hit directions. |
 | `source_scatter_fraction` | void source cells | Fraction of the source voxel budget going to first scattering. |
@@ -821,6 +912,19 @@ where `A(x; lambda)` is `accessibility`, `\bar{v}` is the mean molecular speed,
 and `\bar{v}/\lambda` is the mean free-flight renewal rate. KCR has units of
 `s^-1`; it is a rate field, not a normalized probability.
 
+In the current implementation this replaced the older informal
+`time_weighted_accessibility` wording. The stored canonical field is
+`kinetic_contact_rate_s_inv`; `time_weighted_accessibility_s_inv` is kept only
+as a backward-compatible alias. The multiplier
+
+$$
+\kappa_t = \frac{\bar{v}}{\lambda}
+$$
+
+is the kinetic time factor: the characteristic renewal rate of independent
+free-flight trials. It converts the dimensionless first-contact probability
+`A_i` into a contact-opportunity rate.
+
 On the voxel grid, the stored field is:
 
 $$
@@ -891,6 +995,23 @@ If `rho_ss` were uniform over the void space, this would reduce to
 match exactly because Lambertian wall reflection, boundary reinjection, multiple
 wall hits, and trajectory correlations alter `rho_ss` and the counted hit
 process.
+
+The practical comparison is therefore:
+
+$$
+R_{\mathrm{KWFS}}
+=
+\langle \mathrm{KCR}\rangle_{\Omega_v}
+\times
+E_{\mathrm{dyn}}
+$$
+
+where `E_dyn` is a dynamic enhancement factor. `E_dyn > 1` means that the full
+particle trajectories produce more wall collisions than the first-contact
+baseline because particles remember previous wall reflections, form repeated
+contact bursts, or reside preferentially near wall-rich regions. This is the
+main use of KCR in the current workflow: it explains the particle simulation
+rather than replacing it.
 
 ### Angular Visibility / Angle Fraction
 

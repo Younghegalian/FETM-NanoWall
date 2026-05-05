@@ -110,6 +110,23 @@ static void write_u64(const std::string& path, const std::vector<uint64_t>& valu
     );
 }
 
+static void write_u32(const std::string& path, const std::vector<uint32_t>& values) {
+    std::ofstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("failed to open output file");
+    }
+    file.write(
+        reinterpret_cast<const char*>(values.data()),
+        static_cast<std::streamsize>(values.size() * sizeof(uint32_t))
+    );
+}
+
+static inline void increment_saturating(uint32_t& value) {
+    if (value < std::numeric_limits<uint32_t>::max()) {
+        ++value;
+    }
+}
+
 static bool inside_box(int x, int y, int z, int nx, int ny, int nz) {
     return x >= 0 && x < nx && y >= 0 && y < ny && z >= 0 && z < nz;
 }
@@ -417,6 +434,12 @@ int main(int argc, char** argv) {
     }
 
     std::vector<uint64_t> face_hits(6 * n_voxel, 0);
+    std::vector<uint32_t> particle_hit_counts(static_cast<size_t>(n_particle), 0);
+    std::vector<uint32_t> particle_escape_counts(static_cast<size_t>(n_particle), 0);
+    std::vector<uint32_t> particle_bg_scatter_counts(static_cast<size_t>(n_particle), 0);
+    std::vector<uint32_t> particle_stuck_reset_counts(static_cast<size_t>(n_particle), 0);
+    std::vector<uint32_t> particle_current_wall_burst(static_cast<size_t>(n_particle), 0);
+    std::vector<uint32_t> particle_max_wall_burst_counts(static_cast<size_t>(n_particle), 0);
     uint64_t total_hits = 0;
     uint64_t total_escapes = 0;
     uint64_t total_stuck_resets = 0;
@@ -429,7 +452,8 @@ int main(int argc, char** argv) {
 
     for (int step = 0; step < steps; ++step) {
         bool record = step >= warmup_steps;
-        for (auto& particle : particles) {
+        for (size_t particle_idx = 0; particle_idx < particles.size(); ++particle_idx) {
+            auto& particle = particles[particle_idx];
             double remaining_s = dt_s;
             bool reset_this_step = false;
             int bounces = 0;
@@ -458,12 +482,22 @@ int main(int argc, char** argv) {
                         reset_particle(particle, rng, init_void_indices, nx, ny, sigma_um_s, lambda_um);
                         reset_this_step = true;
                     }
+                    if (record) {
+                        increment_saturating(particle_escape_counts[particle_idx]);
+                    }
+                    particle_current_wall_burst[particle_idx] = 0;
                     ++total_escapes;
                     remaining_s = 0.0;
                 } else {
                     if (record) {
                         size_t solid_idx = index_zyx(trace.solid_x, trace.solid_y, trace.solid_z, nx, ny);
                         face_hits[static_cast<size_t>(trace.face) * n_voxel + solid_idx] += 1;
+                        increment_saturating(particle_hit_counts[particle_idx]);
+                        increment_saturating(particle_current_wall_burst[particle_idx]);
+                        particle_max_wall_burst_counts[particle_idx] = std::max(
+                            particle_max_wall_burst_counts[particle_idx],
+                            particle_current_wall_burst[particle_idx]
+                        );
                         ++total_hits;
                     }
 
@@ -478,6 +512,10 @@ int main(int argc, char** argv) {
                         reset_particle(particle, rng, init_void_indices, nx, ny, sigma_um_s, lambda_um);
                         ++total_stuck_resets;
                         reset_this_step = true;
+                        if (record) {
+                            increment_saturating(particle_stuck_reset_counts[particle_idx]);
+                        }
+                        particle_current_wall_burst[particle_idx] = 0;
                         remaining_s = 0.0;
                     }
                 }
@@ -488,6 +526,10 @@ int main(int argc, char** argv) {
                 if (particle.next_bg_collision_s <= 0.0) {
                     particle.vel_um_s = random_velocity(rng, sigma_um_s);
                     particle.next_bg_collision_s = draw_bg_timer(rng, lambda_um, particle.vel_um_s);
+                    if (record) {
+                        increment_saturating(particle_bg_scatter_counts[particle_idx]);
+                    }
+                    particle_current_wall_burst[particle_idx] = 0;
                     ++total_bg_scatters;
                 }
             }
@@ -501,6 +543,11 @@ int main(int argc, char** argv) {
     }
 
     write_u64(out_dir + "/face_hits.u64", face_hits);
+    write_u32(out_dir + "/particle_hit_counts.u32", particle_hit_counts);
+    write_u32(out_dir + "/particle_escape_counts.u32", particle_escape_counts);
+    write_u32(out_dir + "/particle_bg_scatter_counts.u32", particle_bg_scatter_counts);
+    write_u32(out_dir + "/particle_stuck_reset_counts.u32", particle_stuck_reset_counts);
+    write_u32(out_dir + "/particle_max_wall_burst_counts.u32", particle_max_wall_burst_counts);
 
     double simulated_time_s = static_cast<double>(steps - warmup_steps) * dt_s;
     double collision_rate_s_inv = simulated_time_s > 0.0 ? static_cast<double>(total_hits) / simulated_time_s : 0.0;

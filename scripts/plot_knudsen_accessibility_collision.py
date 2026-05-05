@@ -143,22 +143,30 @@ def plot_kcr(path: Path, rows: list[dict]) -> None:
     kn = [row["kn_hydraulic_4v_awall"] for row in rows]
     rate = [row["collision_rate_per_particle_s_inv"] / 1e9 for row in rows]
     kcr = [row["void_mean_kinetic_contact_rate_s_inv"] / 1e9 for row in rows]
-    ratio = [r / k if k > 0.0 else math.nan for r, k in zip(rate, kcr)]
+    error_pct = [100.0 * (r - k) / r if r > 0.0 else math.nan for r, k in zip(rate, kcr)]
     lambdas = [row["lambda_um"] for row in rows]
 
     blue = "#176B87"
     rust = "#A34E2D"
     gray = "#5F6C7B"
 
-    fig, (ax, ax_ratio) = plt.subplots(
+    fig, (ax, ax_error) = plt.subplots(
         2,
         1,
-        figsize=(7.4, 5.5),
+        figsize=(7.6, 5.55),
         dpi=220,
         sharex=True,
         gridspec_kw={"height_ratios": [3.0, 1.12], "hspace": 0.08},
     )
     fig.patch.set_facecolor("white")
+    fig.suptitle(
+        "Collision Rate vs Kinetic Contact Rate",
+        x=0.095,
+        y=0.975,
+        ha="left",
+        fontsize=12.2,
+        fontweight="semibold",
+    )
 
     ax.fill_between(kn, kcr, rate, color="#CFE2EA", alpha=0.55, linewidth=0)
     ax.plot(
@@ -170,7 +178,7 @@ def plot_kcr(path: Path, rows: list[dict]) -> None:
         markerfacecolor="white",
         markeredgewidth=1.8,
         linewidth=2.4,
-        label="KWFS collision per particle",
+        label="Particle collision rate",
     )
     ax.plot(
         kn,
@@ -182,20 +190,10 @@ def plot_kcr(path: Path, rows: list[dict]) -> None:
         markeredgewidth=1.7,
         linewidth=2.2,
         linestyle=(0, (4, 2)),
-        label="void-mean KCR",
+        label="Kinetic contact rate",
     )
     ax.set_xscale("log")
     ax.set_ylabel(r"rate ($10^9$ s$^{-1}$)")
-    ax.set_title("Void-Mean KCR vs Particle Collision Rate", loc="left", fontsize=12.5, pad=10)
-    ax.text(
-        0.0,
-        1.01,
-        "same voxel void domain; KCR averaged over void cells",
-        transform=ax.transAxes,
-        fontsize=8.5,
-        color=gray,
-        va="bottom",
-    )
     ax.grid(True, which="major", axis="both", color="#E1E6EA", linewidth=0.8)
     ax.grid(True, which="minor", axis="x", color="#EEF2F4", linewidth=0.5)
     ax.legend(loc="upper right", frameon=False, fontsize=8.5)
@@ -212,10 +210,10 @@ def plot_kcr(path: Path, rows: list[dict]) -> None:
             color=gray,
         )
 
-    ax_ratio.axhline(1.0, color="#A0A8B0", linewidth=1.1, linestyle=(0, (3, 3)))
-    ax_ratio.plot(
+    ax_error.axhline(0.0, color="#A0A8B0", linewidth=1.1, linestyle=(0, (3, 3)))
+    ax_error.plot(
         kn,
-        ratio,
+        error_pct,
         color="#3F4D5A",
         marker="D",
         markersize=4.8,
@@ -223,21 +221,21 @@ def plot_kcr(path: Path, rows: list[dict]) -> None:
         markeredgewidth=1.5,
         linewidth=1.9,
     )
-    ax_ratio.set_ylabel("sim / KCR")
-    ax_ratio.set_xlabel(r"$Kn = \lambda / (4V_{\mathrm{void}}/A_{\mathrm{wall}})$")
-    ax_ratio.grid(True, which="major", axis="both", color="#E1E6EA", linewidth=0.8)
-    ax_ratio.set_ylim(0.8, max(ratio) * 1.16)
-    ax_ratio.set_xticks(kn)
-    ax_ratio.set_xticklabels([f"{x:.3g}" for x in kn])
+    ax_error.set_ylabel("error (% of particle)")
+    ax_error.set_xlabel(r"$Kn = \lambda / (4V_{\mathrm{void}}/A_{\mathrm{wall}})$")
+    ax_error.grid(True, which="major", axis="both", color="#E1E6EA", linewidth=0.8)
+    ax_error.set_ylim(min(0.0, min(error_pct)) - 5.0, max(error_pct) * 1.15)
+    ax_error.set_xticks(kn)
+    ax_error.set_xticklabels([f"{x:.3g}" for x in kn])
 
-    for axis in (ax, ax_ratio):
+    for axis in (ax, ax_error):
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
         axis.spines["left"].set_color("#C8D0D6")
         axis.spines["bottom"].set_color("#C8D0D6")
         axis.tick_params(colors="#2F3A44", labelsize=8.2)
 
-    fig.subplots_adjust(left=0.095, right=0.975, top=0.9, bottom=0.12, hspace=0.08)
+    fig.subplots_adjust(left=0.095, right=0.975, top=0.875, bottom=0.12, hspace=0.08)
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
 

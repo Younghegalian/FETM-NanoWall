@@ -147,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     total_escapes = int(kernel_meta.get("total_escapes", 0))
     total_stuck_resets = int(kernel_meta.get("total_stuck_resets", 0))
     total_bg_scatters = int(kernel_meta.get("total_bg_scatters", 0))
+    particle_diag = load_particle_diagnostics(out_dir, n_particle=n_particle, total_hits=total_hits)
 
     total_wall_s = time.perf_counter() - total_wall_start
     particle_steps = int(args.steps) * int(n_particle)
@@ -191,7 +192,9 @@ def main(argv: list[str] | None = None) -> int:
             "hit_curve_csv": str(out_dir / "hit_curve.csv"),
             "face_hits_u64": str(face_hits_path),
             "mask_solid_u8": str(mask_path),
+            **particle_diag["outputs"],
         },
+        "particle_diagnostics": particle_diag["summary"],
         "timing_s": {
             "kernel_wall": kernel_wall_s,
             "vtk_write": vtk_wall_s,
@@ -211,6 +214,86 @@ def build_kernel(kernel: Path) -> None:
     kernel.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["clang++", "-O3", "-std=c++17", str(source), "-o", str(kernel)]
     subprocess.run(cmd, check=True)
+
+
+def load_particle_diagnostics(out_dir: Path, *, n_particle: int, total_hits: int) -> dict:
+    paths = {
+        "particle_hit_counts_u32": out_dir / "particle_hit_counts.u32",
+        "particle_escape_counts_u32": out_dir / "particle_escape_counts.u32",
+        "particle_bg_scatter_counts_u32": out_dir / "particle_bg_scatter_counts.u32",
+        "particle_stuck_reset_counts_u32": out_dir / "particle_stuck_reset_counts.u32",
+        "particle_max_wall_burst_counts_u32": out_dir / "particle_max_wall_burst_counts.u32",
+    }
+    arrays = {key: _read_u32(path, n_particle) for key, path in paths.items()}
+    hit_counts = arrays["particle_hit_counts_u32"]
+    max_burst = arrays["particle_max_wall_burst_counts_u32"]
+    hit_summary = summarize_counts(hit_counts, total=int(total_hits))
+    burst_summary = summarize_counts(max_burst)
+    return {
+        "outputs": {key: str(path) for key, path in paths.items()},
+        "summary": {
+            "hit_counts": hit_summary,
+            "max_wall_burst_counts": burst_summary,
+            "escape_counts": summarize_counts(arrays["particle_escape_counts_u32"]),
+            "bg_scatter_counts": summarize_counts(arrays["particle_bg_scatter_counts_u32"]),
+            "stuck_reset_counts": summarize_counts(arrays["particle_stuck_reset_counts_u32"]),
+        },
+    }
+
+
+def _read_u32(path: Path, expected_size: int) -> np.ndarray:
+    values = np.fromfile(path, dtype=np.uint32)
+    if values.size != expected_size:
+        raise ValueError(f"{path} has {values.size} uint32 values; expected {expected_size}")
+    return values
+
+
+def summarize_counts(values: np.ndarray, *, total: int | None = None) -> dict:
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.size == 0:
+        return {}
+    sorted_values = np.sort(arr)
+    count = int(arr.size)
+    value_sum = float(arr.sum(dtype=np.float64))
+    square_sum = float(np.sum(arr * arr, dtype=np.float64))
+    out = {
+        "count": count,
+        "sum": value_sum,
+        "mean": float(value_sum / count),
+        "std": float(np.std(arr)),
+        "min": float(sorted_values[0]),
+        "p50": float(np.quantile(sorted_values, 0.50)),
+        "p90": float(np.quantile(sorted_values, 0.90)),
+        "p95": float(np.quantile(sorted_values, 0.95)),
+        "p99": float(np.quantile(sorted_values, 0.99)),
+        "p999": float(np.quantile(sorted_values, 0.999)),
+        "max": float(sorted_values[-1]),
+        "zero_fraction": float(np.count_nonzero(arr == 0.0) / count),
+        "gini": gini(sorted_values),
+    }
+    if total is not None:
+        out["sum_matches_total"] = int(value_sum) == int(total)
+    if value_sum > 0.0:
+        top_1 = max(1, int(np.ceil(0.01 * count)))
+        top_5 = max(1, int(np.ceil(0.05 * count)))
+        out["top_1pct_fraction"] = float(sorted_values[-top_1:].sum(dtype=np.float64) / value_sum)
+        out["top_5pct_fraction"] = float(sorted_values[-top_5:].sum(dtype=np.float64) / value_sum)
+        out["self_weighted_mean"] = float(square_sum / value_sum) if square_sum > 0.0 else 0.0
+    else:
+        out["top_1pct_fraction"] = 0.0
+        out["top_5pct_fraction"] = 0.0
+        out["self_weighted_mean"] = 0.0
+    return out
+
+
+def gini(sorted_values: np.ndarray) -> float:
+    values = np.asarray(sorted_values, dtype=np.float64)
+    total = float(values.sum(dtype=np.float64))
+    n = values.size
+    if n == 0 or total <= 0.0:
+        return 0.0
+    ranks = np.arange(1, n + 1, dtype=np.float64)
+    return float((2.0 * np.sum(ranks * values, dtype=np.float64)) / (n * total) - (n + 1.0) / n)
 
 
 def gas_constants(
