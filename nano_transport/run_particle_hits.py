@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+import time
 
 import numpy as np
 
@@ -41,8 +42,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Lower z bound for --init-mode top. Defaults to the max reconstructed height.",
     )
     parser.add_argument("--steps", type=int, default=150000, help="Number of simulation steps.")
+    parser.add_argument("--total-time-s", type=float, default=None, help="Set steps from this simulated duration and --dt-s.")
     parser.add_argument("--dt-s", type=float, default=3e-12, help="Simulation time step in seconds.")
     parser.add_argument("--warmup-steps", type=int, default=0, help="Steps to skip before counting wall hits.")
+    parser.add_argument("--skip-vtk", action="store_true", help="Skip writing the voxel wall-hit VTK file.")
+    parser.add_argument(
+        "--escape-reinject-mode",
+        choices=("boundary", "volume_uniform"),
+        default="boundary",
+        help="How particles are reinserted after leaving the open box boundary.",
+    )
     parser.add_argument("--temp-k", type=float, default=298.0, help="Gas temperature in K.")
     parser.add_argument("--pressure-pa", type=float, default=1.01e5, help="Gas pressure in Pa.")
     parser.add_argument("--molecular-diameter-m", type=float, default=3.7e-10, help="Molecular diameter in m.")
@@ -54,7 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    total_wall_start = time.perf_counter()
     args = build_parser().parse_args(argv)
+    if args.total_time_s is not None:
+        if args.total_time_s <= 0:
+            raise ValueError("--total-time-s must be positive")
+        args.steps = int(np.ceil(args.total_time_s / args.dt_s))
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -103,8 +117,11 @@ def main(argv: list[str] | None = None) -> int:
         args.init_mode,
         f"{top_min_z_um:.12g}",
         str(out_dir),
+        args.escape_reinject_mode,
     ]
+    kernel_wall_start = time.perf_counter()
     result = subprocess.run(cmd, check=True, text=True, capture_output=True)
+    kernel_wall_s = time.perf_counter() - kernel_wall_start
     kernel_meta = _parse_kernel_meta(result.stdout)
 
     face_hits_path = out_dir / "face_hits.u64"
@@ -115,15 +132,28 @@ def main(argv: list[str] | None = None) -> int:
     face_hits = face_hits.reshape((6, nz, ny, nx))
 
     vtk_path = out_dir / "wall_hit_count.vtk"
-    face_count = write_wall_hit_vtk(vtk_path, domain.mask_solid, face_hits, domain.dx_um)
+    face_count = count_exposed_faces(domain.mask_solid)
+    vtk_wall_start = time.perf_counter()
+    if not args.skip_vtk:
+        written_face_count = write_wall_hit_vtk(vtk_path, domain.mask_solid, face_hits, domain.dx_um)
+        if written_face_count != face_count:
+            raise ValueError("voxel face count changed while writing VTK")
+    vtk_wall_s = time.perf_counter() - vtk_wall_start
     wall_area_um2 = float(face_count * domain.dx_um * domain.dx_um)
     warmup_steps = int(kernel_meta["warmup_steps"])
     simulated_time_s = float(kernel_meta["simulated_time_s"])
     total_hits = int(kernel_meta["total_hits"])
     collision_rate = float(kernel_meta["collision_rate_s_inv"])
+    total_escapes = int(kernel_meta.get("total_escapes", 0))
+    total_stuck_resets = int(kernel_meta.get("total_stuck_resets", 0))
+    total_bg_scatters = int(kernel_meta.get("total_bg_scatters", 0))
+
+    total_wall_s = time.perf_counter() - total_wall_start
+    particle_steps = int(args.steps) * int(n_particle)
 
     summary = {
         "source_domain": str(args.domain),
+        "surface_model": "voxel_dda_solid_boundary",
         "shape_zyx": [int(v) for v in domain.shape_zyx],
         "dx_um": float(domain.dx_um),
         "xy_stride": int(args.xy_stride),
@@ -132,12 +162,17 @@ def main(argv: list[str] | None = None) -> int:
         "n_particle_source": "explicit" if args.n_particle is not None else "ppm",
         "ppm": float(args.ppm),
         "init_mode": args.init_mode,
+        "escape_reinject_mode": str(kernel_meta.get("escape_reinject_mode", args.escape_reinject_mode)),
         "wall_height_um": top_min_z_um,
         "steps": int(args.steps),
+        "total_time_s_requested": None if args.total_time_s is None else float(args.total_time_s),
         "dt_s": float(args.dt_s),
         "warmup_steps": warmup_steps,
         "simulated_time_s": simulated_time_s,
         "total_hits": total_hits,
+        "total_escapes": total_escapes,
+        "total_stuck_resets": total_stuck_resets,
+        "total_bg_scatters": total_bg_scatters,
         "collision_rate_s_inv": collision_rate,
         "wall_surface_face_count": int(face_count),
         "wall_area_um2": wall_area_um2,
@@ -152,10 +187,16 @@ def main(argv: list[str] | None = None) -> int:
         "v_mean_um_s": float(constants["v_mean_um_s"]),
         "molar_volume_m3_mol": float(constants["molar_volume_m3_mol"]),
         "outputs": {
-            "wall_hit_count_vtk": str(vtk_path),
+            "wall_hit_count_vtk": None if args.skip_vtk else str(vtk_path),
             "hit_curve_csv": str(out_dir / "hit_curve.csv"),
             "face_hits_u64": str(face_hits_path),
             "mask_solid_u8": str(mask_path),
+        },
+        "timing_s": {
+            "kernel_wall": kernel_wall_s,
+            "vtk_write": vtk_wall_s,
+            "total_wall": total_wall_s,
+            "particle_steps_per_wall_s": particle_steps / kernel_wall_s if kernel_wall_s > 0 else None,
         },
         "kernel": kernel_meta,
     }
@@ -204,8 +245,12 @@ def particle_count_from_ppm(mask_solid: np.ndarray, dx_um: float, ppm: float, mo
     return max(1, int(n))
 
 
+def count_exposed_faces(solid: np.ndarray) -> int:
+    return sum(int(np.count_nonzero(_exposed_face_mask(solid, face))) for face in FACE_NAMES)
+
+
 def write_wall_hit_vtk(path: Path, solid: np.ndarray, face_hits: np.ndarray, dx_um: float) -> int:
-    face_count = sum(int(np.count_nonzero(_exposed_face_mask(solid, face))) for face in FACE_NAMES)
+    face_count = count_exposed_faces(solid)
     point_count = face_count * 4
     with path.open("w", encoding="utf-8") as file:
         file.write("# vtk DataFile Version 3.0\n")

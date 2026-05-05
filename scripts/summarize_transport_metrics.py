@@ -13,6 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 DEFAULT_PERCENTILES = (5.0, 50.0, 95.0, 99.0)
+FIELD_ALIASES = {
+    "kinetic_contact_rate_s_inv": ("kinetic_contact_rate_s_inv", "time_weighted_accessibility_s_inv"),
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -79,6 +82,7 @@ def summarize_transport_metrics(transport_path: Path, *, include_percentiles: bo
     fields: dict[str, Any] = {}
     for name in (
         "accessibility",
+        "kinetic_contact_rate_s_inv",
         "vis_ang",
         "d_min_um",
         "source_scatter_fraction",
@@ -87,9 +91,10 @@ def summarize_transport_metrics(transport_path: Path, *, include_percentiles: bo
         "source_probability_sum",
         "source_conservation_error",
     ):
-        if name not in data.files:
+        source_name = _resolve_field_name(name, data.files)
+        if source_name is None:
             continue
-        arr = np.asarray(data[name], dtype=np.float64)
+        arr = np.asarray(data[source_name], dtype=np.float64)
         field_info: dict[str, Any] = {
             "all": _stats(
                 arr,
@@ -151,6 +156,14 @@ def summarize_transport_metrics(transport_path: Path, *, include_percentiles: bo
         "void_mean_source_scatter_fraction": fields.get("source_scatter_fraction", {}).get("void", {}).get("mean"),
         "void_mean_accessibility": fields.get("accessibility", {}).get("void", {}).get("mean"),
         "void_accessibility_areal_integral_um": fields.get("accessibility", {}).get("void", {}).get("areal_integral_um"),
+        "void_mean_kinetic_contact_rate_s_inv": fields.get("kinetic_contact_rate_s_inv", {})
+        .get("void", {})
+        .get("mean"),
+        "void_kinetic_contact_rate_areal_integral_um_s_inv": fields.get(
+            "kinetic_contact_rate_s_inv", {}
+        )
+        .get("void", {})
+        .get("areal_integral_um"),
         "void_mean_source_escape_fraction": fields.get("source_escape_fraction", {}).get("void", {}).get("mean"),
         "void_mean_source_lost_fraction": fields.get("source_lost_fraction", {}).get("void", {}).get("mean"),
         "void_mean_angle_fraction": fields.get("vis_ang", {}).get("void", {}).get("mean"),
@@ -181,6 +194,7 @@ def summarize_transport_metrics(transport_path: Path, *, include_percentiles: bo
             "areal_integral_um": "sum(field * voxel_volume_um3) / projected_area_um2. This is the preferred thin-film/substrate-normalized integral for scalar fields such as accessibility.",
             "areal_sum_per_um2": "sum(field) / projected_area_um2. This is a diagnostic count-normalized field sum.",
             "accessibility": "Mean direct free-flight surface-arrival probability over sampled directions.",
+            "kinetic_contact_rate_s_inv": "Kinetic Contact Rate, KCR = accessibility * v_mean/lambda. This is a rate field, not a normalized probability.",
             "source_probability_sum": "Per-source scatter + surface + escape + lost fractions. Void values should be approximately 1.",
             "source_conservation_error": "Absolute error |source_probability_sum - 1| for each source voxel.",
             "vis_ang": "Fraction of sampled directions that reached a solid surface.",
@@ -196,6 +210,13 @@ def _read_metadata(data: np.lib.npyio.NpzFile) -> dict[str, Any]:
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
     return json.loads(str(raw))
+
+
+def _resolve_field_name(requested: str, available: list[str]) -> str | None:
+    for candidate in FIELD_ALIASES.get(requested, (requested,)):
+        if candidate in available:
+            return candidate
+    return None
 
 
 def _stats(

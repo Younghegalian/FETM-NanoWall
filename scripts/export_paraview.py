@@ -18,6 +18,7 @@ from nano_transport.voxelize import voxelize_height_domain
 
 FLOAT_FIELDS = (
     "accessibility",
+    "kinetic_contact_rate_s_inv",
     "vis_ang",
     "d_min_um",
     "source_scatter_fraction",
@@ -56,8 +57,14 @@ def main(argv: list[str] | None = None) -> int:
     shape = tuple(int(v) for v in data["mask_solid"].shape)
     nz, ny, nx = shape
 
-    fields = {name: np.asarray(data[name], dtype=np.float32) for name in args.fields if name in data.files}
-    missing = sorted(set(args.fields) - set(fields))
+    fields = {}
+    missing = []
+    for name in args.fields:
+        source_name = _resolve_field_name(name, data.files)
+        if source_name is None:
+            missing.append(name)
+            continue
+        fields[name] = np.asarray(data[source_name], dtype=np.float32)
     if missing:
         raise KeyError(f"transport file does not contain fields: {missing}")
     mask_solid = np.asarray(data["mask_solid"], dtype=np.uint8)
@@ -110,6 +117,14 @@ def _load_metadata(data: np.lib.npyio.NpzFile) -> dict:
         raw = str(np.asarray(data["metadata_json"]).reshape(-1)[0])
         return json.loads(raw)
     raise KeyError("transport file does not contain metadata_json")
+
+
+def _resolve_field_name(requested: str, available: list[str]) -> str | None:
+    if requested in available:
+        return requested
+    if requested == "kinetic_contact_rate_s_inv" and "time_weighted_accessibility_s_inv" in available:
+        return "time_weighted_accessibility_s_inv"
+    return None
 
 
 def _domain_from_metadata(meta: dict) -> Path | None:

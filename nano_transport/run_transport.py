@@ -12,6 +12,9 @@ import numpy as np
 from nano_transport.voxelize import voxelize_height_domain
 
 
+DEFAULT_V_MEAN_UM_S = 370353425.4688162
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run first-event probabilistic transport on a voxelized nanodomain."
@@ -19,6 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--domain", required=True, help="Input domain.npz from SEM pipeline.")
     parser.add_argument("--out-dir", required=True, help="Output directory.")
     parser.add_argument("--lambda-um", type=float, required=True, help="Mean free path in um.")
+    parser.add_argument(
+        "--v-mean-um-s",
+        type=float,
+        default=DEFAULT_V_MEAN_UM_S,
+        help="Mean molecular speed in um/s for kinetic_contact_rate_s_inv.",
+    )
     parser.add_argument("--xy-stride", type=int, default=8, help="Downsampling stride for x/y.")
     parser.add_argument("--z-padding-um", type=float, default=0.2, help="Void padding above max height.")
     parser.add_argument("--n-dir", type=int, default=64, help="Fibonacci direction count.")
@@ -106,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
         "source_probability_sum": _read_f32(out_dir / "source_probability_sum.f32", shape),
         "source_conservation_error": _read_f32(out_dir / "source_conservation_error.f32", shape),
     }
+    kinetic_contact_rate = fields["accessibility"].astype(np.float32) * np.float32(args.v_mean_um_s / args.lambda_um)
+    fields["kinetic_contact_rate_s_inv"] = kinetic_contact_rate
+    fields["time_weighted_accessibility_s_inv"] = kinetic_contact_rate
     meta = {
         "source_domain": str(args.domain),
         "source_mode": "uniform_void",
@@ -116,6 +128,10 @@ def main(argv: list[str] | None = None) -> int:
         "dx_um": domain.dx_um,
         "z_max_um": domain.z_max_um,
         "lambda_um": args.lambda_um,
+        "v_mean_um_s": args.v_mean_um_s,
+        "kinetic_contact_rate_scale_s_inv": args.v_mean_um_s / args.lambda_um,
+        "kinetic_contact_rate_definition": "kinetic_contact_rate_s_inv = accessibility * v_mean_um_s / lambda_um",
+        "time_weighted_accessibility_definition": "Deprecated alias of kinetic_contact_rate_s_inv.",
         "n_dir": args.n_dir,
         "max_dist_factor": args.max_dist_factor,
         "max_reflect": args.max_reflect,

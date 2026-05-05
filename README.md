@@ -18,8 +18,8 @@ FETM means **First-Event Transport Model**. The project uses
 Depth-Anything-3 as a morphology subtool, then applies SEM-specific calibration,
 flat-base correction, height scaling, voxelization, ray-based transport, and
 ParaView export. A separate particle trajectory module, called **Kinetic
-Wall-Flux Simulation (KWFS)**, uses the same reconstructed nanowall mesh to
-estimate wall collision counts and collision rates.
+Wall-Flux Simulation (KWFS)**, uses the same voxelized solid/void nanowall
+domain to estimate wall collision counts and collision rates.
 
 The current target system is:
 
@@ -423,6 +423,11 @@ paraview/domain_solid_voxel_surface.vtk
 paraview/paraview_export_metadata.json
 ```
 
+`transport_fields.npz` and the ParaView VTI include
+`kinetic_contact_rate_s_inv` by default. The default mean molecular speed used
+for this derived KCR field is `370353425.4688162 um/s`; override it with
+`--v-mean-um-s` if the gas model changes.
+
 `domain_height_surface.vtk` depends only on `domain.npz` and `xy_stride`, not on
 MFP. The case wrapper caches it once at:
 
@@ -464,8 +469,10 @@ paraview/domain_solid_voxel_surface.vtk
 
 **Kinetic Wall-Flux Simulation (KWFS)** is the particle-trajectory counterpart
 to the first-event accessibility field. It runs explicit gas-particle
-trajectories over the same isotropic triangle wall mesh and records wall impact
-counts per triangle.
+trajectories over the same voxelized solid/void domain and records wall impact
+counts on exposed voxel faces. The triangle-mesh particle path is kept only as a
+diagnostic path because it produced artificial high-`z` hit spikes on this
+height-field domain.
 
 The model keeps the following physics from the original MATLAB-style particle
 transport setup:
@@ -479,7 +486,8 @@ $$
 $$
 
 - Background gas scattering as an exponential free-flight timer.
-- Triangle-wall collision detection on the reconstructed nanowall mesh.
+- Voxel-DDA wall collision detection on the same solid/void grid used by the
+  first-event accessibility calculation.
 - Lambertian wall reflection after a wall hit.
 - Per-face wall hit counts, total collision rate, and area-averaged collision
   rate.
@@ -500,25 +508,24 @@ fixed `ppm` lower pressure produces fewer simulated particles.
 
 KWFS supports two initial/restart position modes:
 
-- `uniform`: volume-uniform sampling over the full void region above the local
-  height field.
-- `top`: volume-uniform sampling over the void region above `wall_height_um`.
+- `uniform`: volume-uniform sampling over all void voxels.
+- `top`: volume-uniform sampling over void voxels with `z >= wall_height_um`.
 
-For both modes, the sampler weights each `(x,y)` column by its allowed void
-height before sampling `z` inside that column. This is important: legacy runs
-before this correction used projected-column-uniform sampling and can over-sample
-high wall/ridge columns in spatial hit maps.
+For both modes, particle positions are sampled uniformly inside selected void
+voxels.
 
 Outer box boundaries are open reservoir boundaries:
 
 - Side escape reinjects at the corresponding side boundary.
 - Top escape reinjects near `z = z_max`.
-- Reinjected particles receive a new Maxwellian velocity and a new background
-  scattering timer.
+- Reinjected particles receive a random Maxwellian velocity and a new background
+  scattering timer, matching the original MATLAB particle loop.
 
-Wall collisions are counted on the triangle face, the particle is nudged by a
-small surface-normal epsilon, and the outgoing velocity is sampled from a
-Lambertian distribution about the surface normal.
+Wall collisions are counted on exposed voxel faces. After a hit, the particle is
+nudged back to the gas-side voxel face and the outgoing velocity is sampled from
+a Lambertian distribution about that face normal. KWFS reports total escapes,
+stuck resets, and background scattering counts so escape- or reset-dominated
+runs can be rejected before interpretation.
 
 ### Running A KWFS Pressure Sweep
 
@@ -526,7 +533,7 @@ Example corrected full-resolution sweep:
 
 ```bash
 python3 scripts/run_fullres_pressure_sweep_10us.py \
-  --out-root runs/sample_001/fullres_pressure_sweep_50ppm_5us_volume_uniform \
+  --out-root runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us \
   --ppm 50e-6 \
   --total-time-s 5e-6 \
   --write-vtk
@@ -535,19 +542,14 @@ python3 scripts/run_fullres_pressure_sweep_10us.py \
 Each case writes:
 
 ```text
-mesh_particle_hits_summary.json
+particle_hits_summary.json
 hit_curve.csv
-surface_face_hits.u64
-mesh_wall_hit_count.vtk
+face_hits.u64
+wall_hit_count.vtk
 ```
 
-If a run was made with `--skip-vtk` but `surface_face_hits.u64` exists, the VTK
-files can be reconstructed without rerunning trajectories:
-
-```bash
-python3 scripts/write_pressure_sweep_vtks.py \
-  --sweep-dir runs/sample_001/fullres_pressure_sweep_100ppm_10us
-```
+Use `--write-vtk` for ParaView output. Without it, the compact binary
+`face_hits.u64` is still written for reporting and post-processing.
 
 ### Knudsen / Accessibility / Collision Comparison
 
@@ -568,13 +570,43 @@ The comparison script joins:
 
 - `Kn`
 - areal accessibility, `void_accessibility_areal_integral_um`
+- void-mean Kinetic Contact Rate, `void_mean_kinetic_contact_rate_s_inv`
+- void-mean KCR contact time, `void_kinetic_contact_time_ns`
+- finite-window contact probabilities, `void_contact_probability_0p1ns` and
+  `void_contact_probability_1ns`
 - per-particle collision rate, `collision_rate_s_inv / n_particle`
+
+The particle result is normalized per simulated particle:
+
+$$
+R_{\mathrm{KWFS}}
+=
+\frac{N_{\mathrm{wall\,hits}}}
+{N_{\mathrm{particle}}\,T_{\mathrm{counted}}}
+$$
+
+where `T_counted = (steps - warmup_steps) dt`. This gives units of `s^-1`.
+
+The KCR comparison value is the void-source mean:
+
+$$
+\langle \mathrm{KCR}\rangle_{\Omega_v}
+=
+\frac{1}{V_{\mathrm{void}}}
+\int_{\Omega_{\mathrm{void}}}
+A(\mathbf{x};\lambda)\frac{\bar{v}}{\lambda}
+\,dV
+$$
+
+Only void voxels are included because gas particles do not occupy solid voxels.
+This quantity has the same unit as `R_KWFS`, but it is a source-field estimate,
+not a trajectory count.
 
 Run:
 
 ```bash
 python3 scripts/plot_knudsen_accessibility_collision.py \
-  --sweep-dir runs/sample_001/fullres_pressure_sweep_50ppm_5us_volume_uniform
+  --sweep-dir runs/sample_001/kwfs_voxel_pressure_sweep_50ppm_5us
 ```
 
 Outputs:
@@ -582,6 +614,7 @@ Outputs:
 ```text
 knudsen_accessibility_collision.csv
 knudsen_accessibility_collision.png
+knudsen_kcr_collision.png
 ```
 
 The reconstructed height surface can also be exported with the aligned SEM crop
@@ -665,6 +698,7 @@ Regenerate them from the current `runs/sample_001` outputs with:
 `transport_fields.npz` contains:
 
 - `accessibility`: source-voxel accessibility based on surviving direct flights to a wall.
+- `kinetic_contact_rate_s_inv`: Kinetic Contact Rate, `accessibility * v_mean / lambda`.
 - `vis_ang`: source-voxel angular visibility, shown as `Angle fraction` in ParaView snapshots.
 - `d_min_um`: source-voxel minimum wall-hit distance in `um`.
 - `source_scatter_fraction`: per-source probability fraction whose first event is scattering.
@@ -683,6 +717,7 @@ happens to probability launched from each void voxel.
 | Field | Stored on | Meaning |
 | --- | --- | --- |
 | `accessibility` | void source cells | Direction-averaged direct-arrival survival probability. |
+| `kinetic_contact_rate_s_inv` | void source cells | Kinetic Contact Rate, `accessibility * v_mean / lambda`; a rate field in `s^-1`. |
 | `vis_ang` | void source cells | Fraction of sampled directions that hit the nanowall surface. |
 | `d_min_um` | void source cells | Shortest wall-hit distance over all hit directions. |
 | `source_scatter_fraction` | void source cells | Fraction of the source voxel budget going to first scattering. |
@@ -771,6 +806,91 @@ $$
 
 Because `A_i` is dimensionless, `A_areal` has units of length. In output files
 this is stored as `void_accessibility_areal_integral_um`.
+
+### Kinetic Contact Rate
+
+The Kinetic Contact Rate (KCR) attaches a kinetic renewal timescale to the
+direct wall-contact probability:
+
+$$
+\mathrm{KCR}(\mathbf{x};\lambda)
+= A(\mathbf{x};\lambda)\frac{\bar{v}}{\lambda}
+$$
+
+where `A(x; lambda)` is `accessibility`, `\bar{v}` is the mean molecular speed,
+and `\bar{v}/\lambda` is the mean free-flight renewal rate. KCR has units of
+`s^-1`; it is a rate field, not a normalized probability.
+
+On the voxel grid, the stored field is:
+
+$$
+\mathrm{KCR}_i
+=
+A_i \frac{\bar{v}}{\lambda}
+$$
+
+where `i` is a void source voxel. Since all voxels have the same volume in the
+current grid, the void mean used for comparison is:
+
+$$
+\begin{aligned}
+\langle \mathrm{KCR}\rangle_{\Omega_v}
+&=
+\frac{\sum_{i\in\Omega_{\mathrm{void}}}\mathrm{KCR}_i\,\Delta V}
+{\sum_{i\in\Omega_{\mathrm{void}}}\Delta V} \\
+&=
+\frac{1}{N_{\mathrm{void}}}
+\sum_{i\in\Omega_{\mathrm{void}}}
+\mathrm{KCR}_i
+\end{aligned}
+$$
+
+This is written in reports as `void_mean_kinetic_contact_rate_s_inv`. Solid
+voxels are excluded from the mean because they are outside the particle phase
+space.
+
+For a finite reference time window `tau`, the corresponding contact probability
+is:
+
+$$
+P_{\mathrm{contact}}(\mathbf{x};\tau)
+= 1 - \exp[-\mathrm{KCR}(\mathbf{x})\tau]
+$$
+
+For short windows, this reduces to the linear approximation:
+
+$$
+P_{\mathrm{contact}}(\mathbf{x};\tau)
+\approx
+\mathrm{KCR}(\mathbf{x})\tau
+$$
+
+The expected trajectory collision rate can be written as a steady-state
+density-weighted KCR:
+
+$$
+R_{\mathrm{KWFS}}
+\approx
+\int_{\Omega_{\mathrm{void}}}
+\rho_{\mathrm{ss}}(\mathbf{x})
+\mathrm{KCR}(\mathbf{x})
+\,dV
+$$
+
+where `rho_ss` is the particle residence density in the void phase:
+
+$$
+\int_{\Omega_{\mathrm{void}}}
+\rho_{\mathrm{ss}}(\mathbf{x})
+\,dV
+=1
+$$
+
+If `rho_ss` were uniform over the void space, this would reduce to
+`void_mean_kinetic_contact_rate_s_inv`. In real KWFS runs the values need not
+match exactly because Lambertian wall reflection, boundary reinjection, multiple
+wall hits, and trajectory correlations alter `rho_ss` and the counted hit
+process.
 
 ### Angular Visibility / Angle Fraction
 

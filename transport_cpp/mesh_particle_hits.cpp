@@ -32,6 +32,7 @@ struct Triangle {
 struct Hit {
     bool found = false;
     bool escaped = false;
+    int escape_face = -1;
     double t = 1.0;
     Vec3 pos{0.0, 0.0, 0.0};
     Vec3 normal{0.0, 0.0, 1.0};
@@ -58,6 +59,19 @@ struct AccelGrid {
     double domain_y = 1.0;
     double domain_z = 1.0;
     std::vector<std::vector<int>> bins;
+};
+
+enum EscapeFace {
+    ESCAPE_X_NEG = 0,
+    ESCAPE_X_POS = 1,
+    ESCAPE_Y_NEG = 2,
+    ESCAPE_Y_POS = 3,
+    ESCAPE_Z_POS = 4,
+};
+
+struct ExitHit {
+    double t = 2.0;
+    int face = -1;
 };
 
 static inline Vec3 add(Vec3 a, Vec3 b) {
@@ -141,6 +155,17 @@ static double height_at(const std::vector<float>& height, double x_um, double y_
     double h01 = static_cast<double>(height[hidx(x0, y1, nx)]);
     double h11 = static_cast<double>(height[hidx(x1, y1, nx)]);
     return (1.0 - wx) * (1.0 - wy) * h00 + wx * (1.0 - wy) * h10 + (1.0 - wx) * wy * h01 + wx * wy * h11;
+}
+
+static Vec3 surface_normal_at(const std::vector<float>& height, double x_um, double y_um, int nx, int ny, double dx_um) {
+    double eps = std::max(dx_um, 1e-12);
+    double hx0 = height_at(height, x_um - eps, y_um, nx, ny, dx_um);
+    double hx1 = height_at(height, x_um + eps, y_um, nx, ny, dx_um);
+    double hy0 = height_at(height, x_um, y_um - eps, nx, ny, dx_um);
+    double hy1 = height_at(height, x_um, y_um + eps, nx, ny, dx_um);
+    double dhdx = (hx1 - hx0) / (2.0 * eps);
+    double dhdy = (hy1 - hy0) / (2.0 * eps);
+    return normalize({-dhdx, -dhdy, 1.0});
 }
 
 static PositionSampler build_position_sampler(const std::vector<float>& height, double zmax_um, double wall_height_um) {
@@ -242,14 +267,10 @@ static bool intersect_triangle_segment(
     Vec3 a,
     Vec3 b,
     Vec3 c,
-    Vec3 normal,
     double& t_out
 ) {
     constexpr double eps = 1e-12;
     Vec3 dir = sub(p1, p0);
-    if (dot(normal, dir) >= -eps) {
-        return false;
-    }
 
     Vec3 e1 = sub(b, a);
     Vec3 e2 = sub(c, a);
@@ -277,22 +298,28 @@ static bool intersect_triangle_segment(
     return true;
 }
 
-static double first_exit_t(Vec3 p0, Vec3 p1, double xmax, double ymax, double zmax) {
-    double best = std::numeric_limits<double>::infinity();
+static ExitHit first_exit(Vec3 p0, Vec3 p1, double xmax, double ymax, double zmax) {
+    ExitHit best;
     Vec3 d = sub(p1, p0);
-    auto check = [&](double p, double dp, double lo, double hi) {
-        if (dp < 0.0 && p + dp < lo) best = std::min(best, (lo - p) / dp);
-        if (dp > 0.0 && p + dp > hi) best = std::min(best, (hi - p) / dp);
+    auto update = [&](double t, int face) {
+        if (t >= 0.0 && t < best.t) {
+            best.t = t;
+            best.face = face;
+        }
     };
-    check(p0.x, d.x, 0.0, xmax);
-    check(p0.y, d.y, 0.0, ymax);
+    auto check = [&](double p, double dp, double lo, double hi, int lo_face, int hi_face) {
+        if (dp < 0.0 && p + dp < lo) update((lo - p) / dp, lo_face);
+        if (dp > 0.0 && p + dp > hi) update((hi - p) / dp, hi_face);
+    };
+    check(p0.x, d.x, 0.0, xmax, ESCAPE_X_NEG, ESCAPE_X_POS);
+    check(p0.y, d.y, 0.0, ymax, ESCAPE_Y_NEG, ESCAPE_Y_POS);
     if (d.z > 0.0 && p1.z > zmax) {
-        best = std::min(best, (zmax - p0.z) / d.z);
+        update((zmax - p0.z) / d.z, ESCAPE_Z_POS);
     }
-    if (!std::isfinite(best)) {
-        return 2.0;
+    if (best.face >= 0) {
+        best.t = std::clamp(best.t, 0.0, 1.0);
     }
-    return std::clamp(best, 0.0, 1.0);
+    return best;
 }
 
 static Hit trace_segment(
@@ -308,7 +335,7 @@ static Hit trace_segment(
     double zmax
 ) {
     Hit best;
-    double exit_t = first_exit_t(p0, p1, xmax, ymax, zmax);
+    ExitHit exit = first_exit(p0, p1, xmax, ymax, zmax);
     double xmin = std::min(p0.x, p1.x);
     double xmax_seg = std::max(p0.x, p1.x);
     double ymin = std::min(p0.y, p1.y);
@@ -363,12 +390,11 @@ static Hit trace_segment(
                             vertices[tri.a],
                             vertices[tri.b],
                             vertices[tri.c],
-                            tri.normal,
                             t
                         ) && t < best.t) {
                         best.found = true;
                         best.t = t;
-                        best.normal = tri.normal;
+                        best.normal = dot(tri.normal, sub(p1, p0)) > 0.0 ? scale(tri.normal, -1.0) : tri.normal;
                         best.face_id = i;
                     }
                 }
@@ -376,11 +402,12 @@ static Hit trace_segment(
         }
     }
 
-    if (exit_t <= 1.0 && (!best.found || exit_t < best.t)) {
+    if (exit.t <= 1.0 && (!best.found || exit.t < best.t)) {
         Hit result;
         result.escaped = true;
-        result.t = exit_t;
-        result.pos = add(p0, scale(sub(p1, p0), exit_t));
+        result.escape_face = exit.face;
+        result.t = exit.t;
+        result.pos = add(p0, scale(sub(p1, p0), exit.t));
         return result;
     }
     if (best.found) {
@@ -392,6 +419,26 @@ static Hit trace_segment(
 static Vec3 random_velocity(std::mt19937_64& rng, double sigma_um_s) {
     std::normal_distribution<double> normal(0.0, sigma_um_s);
     return {normal(rng), normal(rng), normal(rng)};
+}
+
+static Vec3 inward_flux_velocity(std::mt19937_64& rng, int escape_face, double sigma_um_s) {
+    std::normal_distribution<double> normal(0.0, sigma_um_s);
+    std::uniform_real_distribution<double> uni(0.0, 1.0);
+    double u = std::max(uni(rng), 1e-300);
+    double vn = sigma_um_s * std::sqrt(-2.0 * std::log(u));
+    Vec3 v{normal(rng), normal(rng), normal(rng)};
+    if (escape_face == ESCAPE_X_NEG) {
+        v.x = vn;
+    } else if (escape_face == ESCAPE_X_POS) {
+        v.x = -vn;
+    } else if (escape_face == ESCAPE_Y_NEG) {
+        v.y = vn;
+    } else if (escape_face == ESCAPE_Y_POS) {
+        v.y = -vn;
+    } else if (escape_face == ESCAPE_Z_POS) {
+        v.z = -vn;
+    }
+    return v;
 }
 
 static Vec3 lambertian_velocity(std::mt19937_64& rng, Vec3 normal, double speed_um_s) {
@@ -465,7 +512,7 @@ static Vec3 sample_boundary_position(
     int ny,
     double dx_um,
     double zmax_um,
-    Vec3 out_pos
+    int escape_face
 ) {
     std::uniform_real_distribution<double> uni(0.0, 1.0);
     double xmax = static_cast<double>(nx) * dx_um;
@@ -475,16 +522,16 @@ static Vec3 sample_boundary_position(
         double x = uni(rng) * xmax;
         double y = uni(rng) * ymax;
         double z = zmax_um - eps;
-        if (out_pos.x < 0.0) {
+        if (escape_face == ESCAPE_X_NEG) {
             x = eps;
             z = uni(rng) * zmax_um;
-        } else if (out_pos.x >= xmax) {
+        } else if (escape_face == ESCAPE_X_POS) {
             x = xmax - eps;
             z = uni(rng) * zmax_um;
-        } else if (out_pos.y < 0.0) {
+        } else if (escape_face == ESCAPE_Y_NEG) {
             y = eps;
             z = uni(rng) * zmax_um;
-        } else if (out_pos.y >= ymax) {
+        } else if (escape_face == ESCAPE_Y_POS) {
             y = ymax - eps;
             z = uni(rng) * zmax_um;
         }
@@ -516,8 +563,8 @@ static void reset_particle(
 }
 
 int main(int argc, char** argv) {
-    if (argc != 23 && argc != 24) {
-        std::cerr << "usage: mesh_particle_hits height.f32 nx ny dx_um zmax_um vertices.f32 faces.i32 n_vertex n_face domain_x_um domain_y_um bin_size_um n_particle steps dt_s warmup_steps sigma_um_s lambda_um seed init_mode wall_height_um out_dir [curve_interval_steps]\n";
+    if (argc < 23 || argc > 27) {
+        std::cerr << "usage: mesh_particle_hits height.f32 nx ny dx_um zmax_um vertices.f32 faces.i32 n_vertex n_face domain_x_um domain_y_um bin_size_um n_particle steps dt_s warmup_steps sigma_um_s lambda_um seed init_mode wall_height_um out_dir [escape_reinject_mode] [wall_normal_mode] [wall_action_mode] [curve_interval_steps]\n";
         return 2;
     }
 
@@ -543,7 +590,23 @@ int main(int argc, char** argv) {
     std::string init_mode = argv[20];
     double wall_height_um = std::stod(argv[21]);
     std::string out_dir = argv[22];
-    int curve_interval_steps = argc == 24 ? std::stoi(argv[23]) : 1;
+    std::string escape_reinject_mode = "boundary";
+    std::string wall_normal_mode = "height";
+    std::string wall_action_mode = "reflect";
+    int curve_interval_steps = 1;
+    for (int argi = 23; argi < argc; ++argi) {
+        std::string value = argv[argi];
+        if (value == "boundary" || value == "boundary_inward_flux" || value == "volume_uniform" ||
+            value == "box_reflect") {
+            escape_reinject_mode = value;
+        } else if (value == "height" || value == "triangle") {
+            wall_normal_mode = value;
+        } else if (value == "reflect" || value == "absorb_reset") {
+            wall_action_mode = value;
+        } else {
+            curve_interval_steps = std::stoi(value);
+        }
+    }
 
     if (nx < 2 || ny < 2 || dx_um <= 0.0 || zmax_um <= 0.0 || n_vertex == 0 || n_face == 0 ||
         n_particle <= 0 || steps <= 0 || dt_s <= 0.0) {
@@ -552,6 +615,19 @@ int main(int argc, char** argv) {
     }
     if (init_mode != "uniform" && init_mode != "top") {
         std::cerr << "init_mode must be uniform or top\n";
+        return 2;
+    }
+    if (escape_reinject_mode != "boundary" && escape_reinject_mode != "boundary_inward_flux" &&
+        escape_reinject_mode != "volume_uniform" && escape_reinject_mode != "box_reflect") {
+        std::cerr << "escape_reinject_mode must be boundary, boundary_inward_flux, volume_uniform, or box_reflect\n";
+        return 2;
+    }
+    if (wall_normal_mode != "height" && wall_normal_mode != "triangle") {
+        std::cerr << "wall_normal_mode must be height or triangle\n";
+        return 2;
+    }
+    if (wall_action_mode != "reflect" && wall_action_mode != "absorb_reset") {
+        std::cerr << "wall_action_mode must be reflect or absorb_reset\n";
         return 2;
     }
     warmup_steps = std::max(0, std::min(warmup_steps, steps - 1));
@@ -600,10 +676,16 @@ int main(int argc, char** argv) {
     std::vector<uint64_t> face_hits(n_face, 0);
     uint64_t total_hits = 0;
     uint64_t total_escapes = 0;
+    uint64_t escape_x_neg = 0;
+    uint64_t escape_x_pos = 0;
+    uint64_t escape_y_neg = 0;
+    uint64_t escape_y_pos = 0;
+    uint64_t escape_z_pos = 0;
     uint64_t total_deep_resets = 0;
     uint64_t total_stuck_resets = 0;
+    uint64_t total_boundary_reflections = 0;
     constexpr int max_surface_bounces_per_step = 16;
-    constexpr double wall_eps_um = 1e-7;
+    constexpr double wall_eps_um = 1e-5;
 
     std::ofstream curve(out_dir + "/hit_curve.csv");
     curve << "step,time_s,total_hits,collision_rate_s_inv\n";
@@ -653,12 +735,85 @@ int main(int argc, char** argv) {
                 );
 
                 if (hit.escaped) {
-                    p.pos_um = sample_boundary_position(rng, height, position_sampler, nx, ny, dx_um, zmax_um, hit.pos);
-                    p.vel_um_s = random_velocity(rng, sigma_um_s);
-                    p.next_bg_collision_s = draw_bg_timer(rng, lambda_um, p.vel_um_s);
-                    ++total_escapes;
-                    reset_this_step = true;
-                    remaining_s = 0.0;
+                    if (escape_reinject_mode == "box_reflect") {
+                        remaining_s = std::max(0.0, remaining_s * (1.0 - hit.t));
+                        p.pos_um = hit.pos;
+                        if (hit.escape_face == ESCAPE_X_NEG) {
+                            p.pos_um.x = wall_eps_um;
+                            p.vel_um_s.x = -p.vel_um_s.x;
+                        } else if (hit.escape_face == ESCAPE_X_POS) {
+                            p.pos_um.x = domain_x_um - wall_eps_um;
+                            p.vel_um_s.x = -p.vel_um_s.x;
+                        } else if (hit.escape_face == ESCAPE_Y_NEG) {
+                            p.pos_um.y = wall_eps_um;
+                            p.vel_um_s.y = -p.vel_um_s.y;
+                        } else if (hit.escape_face == ESCAPE_Y_POS) {
+                            p.pos_um.y = domain_y_um - wall_eps_um;
+                            p.vel_um_s.y = -p.vel_um_s.y;
+                        } else if (hit.escape_face == ESCAPE_Z_POS) {
+                            p.pos_um.z = zmax_um - wall_eps_um;
+                            p.vel_um_s.z = -p.vel_um_s.z;
+                        }
+                        ++total_boundary_reflections;
+                        ++bounces;
+                        if (bounces >= max_surface_bounces_per_step) {
+                            reset_particle(
+                                p,
+                                rng,
+                                height,
+                                position_sampler,
+                                nx,
+                                ny,
+                                dx_um,
+                                zmax_um,
+                                init_mode,
+                                wall_height_um,
+                                sigma_um_s,
+                                lambda_um
+                            );
+                            ++total_stuck_resets;
+                            reset_this_step = true;
+                            remaining_s = 0.0;
+                        }
+                    } else {
+                        if (escape_reinject_mode == "volume_uniform") {
+                            p.pos_um = sample_position(
+                                rng,
+                                height,
+                                position_sampler,
+                                nx,
+                                ny,
+                                dx_um,
+                                zmax_um,
+                                init_mode,
+                                wall_height_um
+                            );
+                            p.vel_um_s = random_velocity(rng, sigma_um_s);
+                        } else {
+                            p.pos_um = sample_boundary_position(
+                                rng,
+                                height,
+                                position_sampler,
+                                nx,
+                                ny,
+                                dx_um,
+                                zmax_um,
+                                hit.escape_face
+                            );
+                            p.vel_um_s = escape_reinject_mode == "boundary_inward_flux"
+                                ? inward_flux_velocity(rng, hit.escape_face, sigma_um_s)
+                                : random_velocity(rng, sigma_um_s);
+                        }
+                        p.next_bg_collision_s = draw_bg_timer(rng, lambda_um, p.vel_um_s);
+                        ++total_escapes;
+                        if (hit.escape_face == ESCAPE_X_NEG) ++escape_x_neg;
+                        if (hit.escape_face == ESCAPE_X_POS) ++escape_x_pos;
+                        if (hit.escape_face == ESCAPE_Y_NEG) ++escape_y_neg;
+                        if (hit.escape_face == ESCAPE_Y_POS) ++escape_y_pos;
+                        if (hit.escape_face == ESCAPE_Z_POS) ++escape_z_pos;
+                        reset_this_step = true;
+                        remaining_s = 0.0;
+                    }
                 } else if (!hit.found) {
                     p.pos_um = p1;
                     remaining_s = 0.0;
@@ -667,9 +822,35 @@ int main(int argc, char** argv) {
                         face_hits[hit.face_id] += 1;
                         ++total_hits;
                     }
+                    if (wall_action_mode == "absorb_reset") {
+                        reset_particle(
+                            p,
+                            rng,
+                            height,
+                            position_sampler,
+                            nx,
+                            ny,
+                            dx_um,
+                            zmax_um,
+                            init_mode,
+                            wall_height_um,
+                            sigma_um_s,
+                            lambda_um
+                        );
+                        reset_this_step = true;
+                        remaining_s = 0.0;
+                        break;
+                    }
                     remaining_s = std::max(0.0, remaining_s * (1.0 - hit.t));
-                    p.pos_um = add(hit.pos, scale(hit.normal, wall_eps_um));
-                    p.vel_um_s = lambertian_velocity(rng, hit.normal, sigma_um_s);
+                    Vec3 gas_normal = wall_normal_mode == "triangle"
+                        ? hit.normal
+                        : surface_normal_at(height, hit.pos.x, hit.pos.y, nx, ny, dx_um);
+                    p.pos_um = add(hit.pos, scale(gas_normal, wall_eps_um));
+                    double lifted_h = height_at(height, p.pos_um.x, p.pos_um.y, nx, ny, dx_um);
+                    if (p.pos_um.z <= lifted_h + wall_eps_um) {
+                        p.pos_um.z = lifted_h + wall_eps_um;
+                    }
+                    p.vel_um_s = lambertian_velocity(rng, gas_normal, sigma_um_s);
                     ++bounces;
                     if (bounces >= max_surface_bounces_per_step) {
                         reset_particle(
@@ -731,11 +912,20 @@ int main(int argc, char** argv) {
     std::cout << "total_hits=" << total_hits << "\n";
     std::cout << "collision_rate_s_inv=" << collision_rate_s_inv << "\n";
     std::cout << "total_escapes=" << total_escapes << "\n";
+    std::cout << "escape_x_neg=" << escape_x_neg << "\n";
+    std::cout << "escape_x_pos=" << escape_x_pos << "\n";
+    std::cout << "escape_y_neg=" << escape_y_neg << "\n";
+    std::cout << "escape_y_pos=" << escape_y_pos << "\n";
+    std::cout << "escape_z_pos=" << escape_z_pos << "\n";
     std::cout << "total_deep_resets=" << total_deep_resets << "\n";
     std::cout << "total_stuck_resets=" << total_stuck_resets << "\n";
+    std::cout << "total_boundary_reflections=" << total_boundary_reflections << "\n";
     std::cout << "sigma_um_s=" << sigma_um_s << "\n";
     std::cout << "lambda_um=" << lambda_um << "\n";
     std::cout << "init_mode=" << init_mode << "\n";
+    std::cout << "escape_reinject_mode=" << escape_reinject_mode << "\n";
+    std::cout << "wall_normal_mode=" << wall_normal_mode << "\n";
+    std::cout << "wall_action_mode=" << wall_action_mode << "\n";
     std::cout << "wall_height_um=" << wall_height_um << "\n";
     return 0;
 }

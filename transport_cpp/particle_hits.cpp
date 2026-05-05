@@ -124,6 +124,16 @@ static Face face_from_axis_step(int axis, int step) {
     return step > 0 ? Z_MINUS : Z_PLUS;
 }
 
+static Face escape_face_from_axis_step(int axis, int step) {
+    if (axis == 0) {
+        return step > 0 ? X_PLUS : X_MINUS;
+    }
+    if (axis == 1) {
+        return step > 0 ? Y_PLUS : Y_MINUS;
+    }
+    return step > 0 ? Z_PLUS : Z_MINUS;
+}
+
 static Vec3 normal_from_axis_step(int axis, int step) {
     Vec3 n{0.0, 0.0, 0.0};
     double value = step > 0 ? -1.0 : 1.0;
@@ -222,6 +232,7 @@ static TraceResult trace_segment(
             TraceResult result;
             result.kind = TraceKind::Escaped;
             result.distance_um = traveled_vox * dx_um;
+            result.face = static_cast<int>(escape_face_from_axis_step(hit_axis, step));
             return result;
         }
 
@@ -285,6 +296,34 @@ static Vec3 random_void_position(std::mt19937_64& rng, const std::vector<size_t>
     return {static_cast<double>(x) + uni(rng), static_cast<double>(y) + uni(rng), static_cast<double>(z) + uni(rng)};
 }
 
+static Vec3 random_boundary_position(
+    std::mt19937_64& rng,
+    const std::vector<uint8_t>& solid,
+    int nx,
+    int ny,
+    int nz,
+    int face
+) {
+    std::uniform_real_distribution<double> uni(0.0, 1.0);
+    constexpr double eps = 1e-7;
+    for (int attempt = 0; attempt < 100000; ++attempt) {
+        Vec3 pos{uni(rng) * nx, uni(rng) * ny, uni(rng) * nz};
+        if (face == X_MINUS) pos.x = eps;
+        if (face == X_PLUS) pos.x = static_cast<double>(nx) - eps;
+        if (face == Y_MINUS) pos.y = eps;
+        if (face == Y_PLUS) pos.y = static_cast<double>(ny) - eps;
+        if (face == Z_MINUS) pos.z = eps;
+        if (face == Z_PLUS) pos.z = static_cast<double>(nz) - eps;
+        int ix = std::clamp(static_cast<int>(std::floor(pos.x)), 0, nx - 1);
+        int iy = std::clamp(static_cast<int>(std::floor(pos.y)), 0, ny - 1);
+        int iz = std::clamp(static_cast<int>(std::floor(pos.z)), 0, nz - 1);
+        if (solid[index_zyx(ix, iy, iz, nx, ny)] == 0) {
+            return pos;
+        }
+    }
+    throw std::runtime_error("failed to sample boundary void position");
+}
+
 static void reset_particle(
     Particle& p,
     std::mt19937_64& rng,
@@ -300,8 +339,8 @@ static void reset_particle(
 }
 
 int main(int argc, char** argv) {
-    if (argc != 16) {
-        std::cerr << "usage: particle_hits mask.u8 nx ny nz dx_um n_particle steps dt_s warmup_steps sigma_um_s lambda_um seed init_mode top_min_z_um out_dir\n";
+    if (argc != 16 && argc != 17) {
+        std::cerr << "usage: particle_hits mask.u8 nx ny nz dx_um n_particle steps dt_s warmup_steps sigma_um_s lambda_um seed init_mode top_min_z_um out_dir [escape_reinject_mode]\n";
         return 2;
     }
 
@@ -320,6 +359,7 @@ int main(int argc, char** argv) {
     std::string init_mode = argv[13];
     double top_min_z_um = std::stod(argv[14]);
     std::string out_dir = argv[15];
+    std::string escape_reinject_mode = argc == 17 ? argv[16] : "boundary";
 
     if (nx <= 0 || ny <= 0 || nz <= 0 || dx_um <= 0.0 || n_particle <= 0 || steps <= 0 || dt_s <= 0.0) {
         std::cerr << "invalid positive parameter\n";
@@ -328,6 +368,10 @@ int main(int argc, char** argv) {
     warmup_steps = std::max(0, std::min(warmup_steps, steps - 1));
     if (sigma_um_s <= 0.0 || lambda_um <= 0.0) {
         std::cerr << "sigma_um_s and lambda_um must be positive\n";
+        return 2;
+    }
+    if (escape_reinject_mode != "boundary" && escape_reinject_mode != "volume_uniform") {
+        std::cerr << "escape_reinject_mode must be boundary or volume_uniform\n";
         return 2;
     }
 
@@ -376,6 +420,7 @@ int main(int argc, char** argv) {
     uint64_t total_hits = 0;
     uint64_t total_escapes = 0;
     uint64_t total_stuck_resets = 0;
+    uint64_t total_bg_scatters = 0;
     constexpr int max_surface_bounces_per_step = 16;
     constexpr double wall_eps_vox = 1e-7;
 
@@ -406,9 +451,14 @@ int main(int argc, char** argv) {
                     particle.pos_vox = add(particle.pos_vox, displacement_vox);
                     remaining_s = 0.0;
                 } else if (trace.kind == TraceKind::Escaped) {
-                    reset_particle(particle, rng, init_void_indices, nx, ny, sigma_um_s, lambda_um);
+                    if (escape_reinject_mode == "boundary" && trace.face >= 0) {
+                        particle.pos_vox = random_boundary_position(rng, solid, nx, ny, nz, trace.face);
+                        particle.vel_um_s = random_velocity(rng, sigma_um_s);
+                    } else {
+                        reset_particle(particle, rng, init_void_indices, nx, ny, sigma_um_s, lambda_um);
+                        reset_this_step = true;
+                    }
                     ++total_escapes;
-                    reset_this_step = true;
                     remaining_s = 0.0;
                 } else {
                     if (record) {
@@ -438,6 +488,7 @@ int main(int argc, char** argv) {
                 if (particle.next_bg_collision_s <= 0.0) {
                     particle.vel_um_s = random_velocity(rng, sigma_um_s);
                     particle.next_bg_collision_s = draw_bg_timer(rng, lambda_um, particle.vel_um_s);
+                    ++total_bg_scatters;
                 }
             }
         }
@@ -469,9 +520,11 @@ int main(int argc, char** argv) {
     std::cout << "collision_rate_s_inv=" << collision_rate_s_inv << "\n";
     std::cout << "total_escapes=" << total_escapes << "\n";
     std::cout << "total_stuck_resets=" << total_stuck_resets << "\n";
+    std::cout << "total_bg_scatters=" << total_bg_scatters << "\n";
     std::cout << "sigma_um_s=" << sigma_um_s << "\n";
     std::cout << "lambda_um=" << lambda_um << "\n";
     std::cout << "init_mode=" << init_mode << "\n";
+    std::cout << "escape_reinject_mode=" << escape_reinject_mode << "\n";
     std::cout << "top_min_z_um=" << top_min_z_um << "\n";
     return 0;
 }

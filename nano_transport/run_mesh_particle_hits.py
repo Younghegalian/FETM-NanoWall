@@ -34,6 +34,24 @@ def build_parser() -> argparse.ArgumentParser:
         default="uniform",
         help="Initial/reinjection distribution: full void region or z above wall height.",
     )
+    parser.add_argument(
+        "--escape-reinject-mode",
+        choices=("boundary", "boundary_inward_flux", "volume_uniform", "box_reflect"),
+        default="boundary",
+        help="How particles are reinserted after leaving the open box boundary.",
+    )
+    parser.add_argument(
+        "--wall-normal-mode",
+        choices=("height", "triangle"),
+        default="height",
+        help="Surface normal used for wall lift and Lambertian reflection.",
+    )
+    parser.add_argument(
+        "--wall-action-mode",
+        choices=("reflect", "absorb_reset"),
+        default="reflect",
+        help="Wall handling after a hit: Lambertian reflection or diagnostic absorbing reset.",
+    )
     parser.add_argument("--wall-height-um", type=float, default=None, help="Lower z bound for --init-mode top.")
     parser.add_argument("--steps", type=int, default=150000, help="Number of simulation steps.")
     parser.add_argument("--total-time-s", type=float, default=None, help="Set steps from this simulated duration and --dt-s.")
@@ -156,6 +174,9 @@ def main(argv: list[str] | None = None) -> int:
         args.init_mode,
         f"{wall_height_um:.12g}",
         str(out_dir),
+        args.escape_reinject_mode,
+        args.wall_normal_mode,
+        args.wall_action_mode,
         str(args.curve_interval_steps),
     ]
     kernel_wall_start = time.perf_counter()
@@ -181,6 +202,10 @@ def main(argv: list[str] | None = None) -> int:
         vtk_output = str(vtk_path)
     vtk_wall_s = time.perf_counter() - vtk_wall_start
     total_hits = int(kernel_meta["total_hits"])
+    total_escapes = int(kernel_meta.get("total_escapes", 0))
+    total_deep_resets = int(kernel_meta.get("total_deep_resets", 0))
+    total_stuck_resets = int(kernel_meta.get("total_stuck_resets", 0))
+    total_boundary_reflections = int(kernel_meta.get("total_boundary_reflections", 0))
     simulated_time_s = float(kernel_meta["simulated_time_s"])
     collision_rate = float(kernel_meta["collision_rate_s_inv"])
     total_wall_s = time.perf_counter() - total_wall_start
@@ -205,6 +230,9 @@ def main(argv: list[str] | None = None) -> int:
         "n_particle_source": "explicit" if args.n_particle is not None else "ppm",
         "ppm": float(args.ppm),
         "init_mode": args.init_mode,
+        "escape_reinject_mode": str(kernel_meta.get("escape_reinject_mode", args.escape_reinject_mode)),
+        "wall_normal_mode": str(kernel_meta.get("wall_normal_mode", args.wall_normal_mode)),
+        "wall_action_mode": str(kernel_meta.get("wall_action_mode", args.wall_action_mode)),
         "wall_height_um": wall_height_um,
         "steps": int(args.steps),
         "total_time_s_requested": None if args.total_time_s is None else float(args.total_time_s),
@@ -214,6 +242,15 @@ def main(argv: list[str] | None = None) -> int:
         "warmup_steps": int(kernel_meta["warmup_steps"]),
         "simulated_time_s": simulated_time_s,
         "total_hits": total_hits,
+        "total_escapes": total_escapes,
+        "escape_x_neg": int(kernel_meta.get("escape_x_neg", 0)),
+        "escape_x_pos": int(kernel_meta.get("escape_x_pos", 0)),
+        "escape_y_neg": int(kernel_meta.get("escape_y_neg", 0)),
+        "escape_y_pos": int(kernel_meta.get("escape_y_pos", 0)),
+        "escape_z_pos": int(kernel_meta.get("escape_z_pos", 0)),
+        "total_deep_resets": total_deep_resets,
+        "total_stuck_resets": total_stuck_resets,
+        "total_boundary_reflections": total_boundary_reflections,
         "collision_rate_s_inv": collision_rate,
         "wall_area_um2": area_um2,
         "area_averaged_collision_rate_um2_s_inv": collision_rate / area_um2 if area_um2 else None,

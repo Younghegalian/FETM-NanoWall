@@ -18,6 +18,7 @@ from nano_transport.voxelize import voxelize_height_domain
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_V_MEAN_UM_S = 370353425.4688162
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--results-root", default="runs/sample_001")
     parser.add_argument("--out-dir", help="Optional explicit output directory.")
     parser.add_argument("--lambda-um", type=float, default=0.10)
+    parser.add_argument("--v-mean-um-s", type=float, default=DEFAULT_V_MEAN_UM_S)
     parser.add_argument("--xy-stride", type=int, required=True)
     parser.add_argument("--n-dir", type=int, required=True)
     parser.add_argument("--z-padding-um", type=float, default=0.20)
@@ -61,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
         str(out_dir),
         "--lambda-um",
         f"{args.lambda_um:.12g}",
+        "--v-mean-um-s",
+        f"{args.v_mean_um_s:.12g}",
         "--xy-stride",
         str(args.xy_stride),
         "--z-padding-um",
