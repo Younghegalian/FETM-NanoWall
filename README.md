@@ -190,13 +190,17 @@ after DA3 inference, orientation correction, base locking, and height scaling:
 
 If a manual SEM ruler line is supplied,
 
-$$s_{px} = \frac{L_{\mathrm{um}}}{\sqrt{(x_2-x_1)^2 + (y_2-y_1)^2}}$$
+```math
+s_{px} = \frac{L_{\mathrm{um}}}{\sqrt{(x_2-x_1)^2 + (y_2-y_1)^2}}
+```
 
 where `s_px` is the source-image pixel size in `um / px`.
 
 After DA3 resizing, output pixel sizes are:
 
-$$\Delta x = s_{px}\frac{W_{\mathrm{crop}}}{W_{\mathrm{depth}}}, \qquad \Delta y = s_{px}\frac{H_{\mathrm{crop}}}{H_{\mathrm{depth}}}$$
+```math
+\Delta x = s_{px}\frac{W_{\mathrm{crop}}}{W_{\mathrm{depth}}}, \qquad \Delta y = s_{px}\frac{H_{\mathrm{crop}}}{H_{\mathrm{depth}}}
+```
 
 ### Depth Orientation
 
@@ -205,26 +209,36 @@ topography measurement:
 
 If `invert_depth` is true:
 
-$$d_o(x,y) = -d(x,y)$$
+```math
+d_o(x,y) = -d(x,y)
+```
 
 Otherwise:
 
-$$d_o(x,y) = d(x,y)$$
+```math
+d_o(x,y) = d(x,y)
+```
 
 The oriented depth is shifted by a low percentile:
 
-$$d_s(x,y) = d_o(x,y) - Q_{0.01}(d_o)$$
+```math
+d_s(x,y) = d_o(x,y) - Q_{0.01}(d_o)
+```
 
 ### Flat-Base Bias Correction
 
 Low regions are used as substrate candidates:
 
-$$B = \{(x,y): d_s(x,y) \le Q_p^{\mathrm{tile}}(d_s)\}$$
+```math
+B = \{(x,y): d_s(x,y) \le Q_p^{\mathrm{tile}}(d_s)\}
+```
 
 A substrate bias surface `b(x,y)` is estimated either by robust polynomial
 fitting or tile interpolation. The corrected field is:
 
-$$h_c(x,y) = \max(d_s(x,y) - b(x,y) - f_{\mathrm{base}}(x,y), 0)$$
+```math
+h_c(x,y) = \max(d_s(x,y) - b(x,y) - f_{\mathrm{base}}(x,y), 0)
+```
 
 where `f_base` is the global or tiled base-lock floor.
 
@@ -232,9 +246,13 @@ where `f_base` is the global or tiled base-lock floor.
 
 The corrected morphology is mapped to the known nanowall height scale:
 
-$$\alpha = \frac{H_{\mathrm{target}}}{Q_p(h_c : h_c > 0)}$$
+```math
+\alpha = \frac{H_{\mathrm{target}}}{Q_p(h_c : h_c > 0)}
+```
 
-$$h_{\mathrm{um}}(x,y) = \alpha h_c(x,y)$$
+```math
+h_{\mathrm{um}}(x,y) = \alpha h_c(x,y)
+```
 
 For the current sample, `H_target = 1.7 um`.
 
@@ -243,9 +261,13 @@ For the current sample, `H_target = 1.7 um`.
 SEM-bright nanowall edges can be constrained to a maximum band rather than a
 constant value. With target height `H` and negative tolerance `tau`,
 
-$$H_{\mathrm{low}} = H(1-\tau)$$
+```math
+H_{\mathrm{low}} = H(1-\tau)
+```
 
-$$h_{\mathrm{edge}}(x,y) = H_{\mathrm{low}} + r(x,y)(H-H_{\mathrm{low}}), \qquad 0 \le r(x,y) \le 1$$
+```math
+h_{\mathrm{edge}}(x,y) = H_{\mathrm{low}} + r(x,y)(H-H_{\mathrm{low}}), \qquad 0 \le r(x,y) \le 1
+```
 
 Thus edge values are based on their existing pixel values, capped by `H`, and
 allowed to vary only downward.
@@ -273,29 +295,41 @@ The resulting surface can be checked interactively through
 
 For stride `k`, the transport grid spacing is:
 
-$$\Delta = k \Delta x$$
+```math
+\Delta = k \Delta x
+```
 
 The downsampled height uses block maxima:
 
-$$h_k(I,J) = \max_{(x,y)\in \mathrm{block}(I,J)} h_{\mathrm{um}}(x,y)$$
+```math
+h_k(I,J) = \max_{(x,y)\in \mathrm{block}(I,J)} h_{\mathrm{um}}(x,y)
+```
 
 Voxel centers are:
 
-$$z_l = \left(l + \frac{1}{2}\right)\Delta$$
+```math
+z_l = \left(l + \frac{1}{2}\right)\Delta
+```
 
 The solid mask is:
 
 Solid voxels are assigned by:
 
-$$\Omega_s(l,J,I) = 1 \quad \mathrm{if} \quad z_l \le h_k(I,J)$$
+```math
+\Omega_s(l,J,I) = 1 \quad \mathrm{if} \quad z_l \le h_k(I,J)
+```
 
 and otherwise:
 
-$$\Omega_s(l,J,I) = 0$$
+```math
+\Omega_s(l,J,I) = 0
+```
 
 The void region is:
 
-$$\Omega_v = \Omega \setminus \Omega_s$$
+```math
+\Omega_v = \Omega \setminus \Omega_s
+```
 
 In arrays:
 
@@ -313,15 +347,21 @@ survival, first scattering probability, and ray-surface interactions.
 
 Every void voxel receives equal source mass:
 
-$$\phi_{\mathrm{in}}(x_i) = \frac{1}{|\Omega_v|}, \qquad x_i \in \Omega_v$$
+```math
+\phi_{\mathrm{in}}(x_i) = \frac{1}{|\Omega_v|}, \qquad x_i \in \Omega_v
+```
 
 ### Free-Flight Survival
 
-$$P_{\mathrm{survive}}(d) = \exp\left(-\frac{d}{\lambda}\right)$$
+```math
+P_{\mathrm{survive}}(d) = \exp\left(-\frac{d}{\lambda}\right)
+```
 
 ### First Scattering Density
 
-$$p(s) = \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)$$
+```math
+p(s) = \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)
+```
 
 ### Probability Decomposition
 
@@ -329,19 +369,19 @@ For one traced direction, let `tau` be the terminal path length. The terminal
 event is one of wall hit, box escape, or max-distance truncation. Along that
 direction:
 
-$$
+```math
 \int_0^{\tau}
 \frac{1}{\lambda}\exp\left(-\frac{s}{\lambda}\right)\,ds
 +
 \exp\left(-\frac{\tau}{\lambda}\right)
 =1
-$$
+```
 
 The integral is the probability that the first event is background scattering
 before the terminal event. The surviving residual is assigned according to how
 the ray terminates:
 
-$$
+```math
 \begin{aligned}
 1
 &=
@@ -353,7 +393,7 @@ B_{\mathrm{scatter}}(x_i,u)
 +
 \chi_{\mathrm{lost}}(x_i,u)\exp\left(-\frac{\tau}{\lambda}\right)
 \end{aligned}
-$$
+```
 
 `lost` is a ray-truncation residual: the ray reached the configured maximum
 length before wall hit or box escape. It is not a separate physical reaction
@@ -363,30 +403,44 @@ pathway.
 
 Directions are sampled with a Fibonacci sphere:
 
-$$z_m = 1 - \frac{2(m+0.5)}{N}$$
+```math
+z_m = 1 - \frac{2(m+0.5)}{N}
+```
 
-$$\theta_m = m\pi(3-\sqrt{5})$$
+```math
+\theta_m = m\pi(3-\sqrt{5})
+```
 
-$$v_m = \bigl(\cos\theta_m\sqrt{1-z_m^2}, \; \sin\theta_m\sqrt{1-z_m^2}, \; z_m\bigr)$$
+```math
+v_m = \bigl(\cos\theta_m\sqrt{1-z_m^2}, \; \sin\theta_m\sqrt{1-z_m^2}, \; z_m\bigr)
+```
 
 with equal directional weight:
 
-$$w_m = \frac{1}{N}$$
+```math
+w_m = \frac{1}{N}
+```
 
 ### DDA Source-Budget Accumulation
 
 For each ray segment `[s_a, s_b]` inside a voxel:
 
-$$\Delta F = \exp\left(-\frac{s_a}{\lambda}\right) - \exp\left(-\frac{s_b}{\lambda}\right)$$
+```math
+\Delta F = \exp\left(-\frac{s_a}{\lambda}\right) - \exp\left(-\frac{s_b}{\lambda}\right)
+```
 
 The source voxel accumulates this segment probability as its first-scattering
 fraction:
 
-$$B_{\mathrm{scatter}}(x_i) \leftarrow B_{\mathrm{scatter}}(x_i) + w_m \Delta F$$
+```math
+B_{\mathrm{scatter}}(x_i) \leftarrow B_{\mathrm{scatter}}(x_i) + w_m \Delta F
+```
 
 If a solid surface is reached at distance `d`:
 
-$$A(x_i) \leftarrow A(x_i) + w_m \exp\left(-\frac{d}{\lambda}\right)$$
+```math
+A(x_i) \leftarrow A(x_i) + w_m \exp\left(-\frac{d}{\lambda}\right)
+```
 
 If a ray escapes the box or is truncated at the maximum ray length, the
 surviving residual probability is stored in `source_escape_fraction` or
@@ -394,7 +448,9 @@ surviving residual probability is stored in `source_escape_fraction` or
 
 After averaging over directions, each source voxel `x_i` has the budget:
 
-$$B_{\mathrm{scatter}}(x_i) + A(x_i) + B_{\mathrm{escape}}(x_i) + B_{\mathrm{lost}}(x_i) \approx 1$$
+```math
+B_{\mathrm{scatter}}(x_i) + A(x_i) + B_{\mathrm{escape}}(x_i) + B_{\mathrm{lost}}(x_i) \approx 1
+```
 
 The current pipeline stores this source-side budget directly and no longer
 exports destination-side probability-deposition fields.
@@ -403,17 +459,23 @@ exports destination-side probability-deposition fields.
 
 When enabled, rays reflect specularly from the computational box:
 
-$$v' = v - 2(v\cdot n)n$$
+```math
+v' = v - 2(v\cdot n)n
+```
 
 For axis-aligned boundaries this flips the corresponding component:
 
-$$v_x'=-v_x, \qquad v_y'=-v_y, \qquad v_z'=-v_z$$
+```math
+v_x'=-v_x, \qquad v_y'=-v_y, \qquad v_z'=-v_z
+```
 
 ### Probability Check
 
 The kernel reports:
 
-$$B_{\mathrm{scatter}}(x_i) + A(x_i) + B_{\mathrm{escape}}(x_i) + B_{\mathrm{lost}}(x_i) \approx 1 \qquad \forall x_i \in \Omega_v$$
+```math
+B_{\mathrm{scatter}}(x_i) + A(x_i) + B_{\mathrm{escape}}(x_i) + B_{\mathrm{lost}}(x_i) \approx 1 \qquad \forall x_i \in \Omega_v
+```
 
 ## Run Transport And ParaView Export
 
@@ -504,10 +566,10 @@ transport setup:
 - Maxwellian velocity initialization with gas temperature and molecular mass.
 - Mean free path from pressure:
 
-$$
+```math
 \lambda =
 \frac{k_B T}{\sqrt{2}\pi d^2 P}
-$$
+```
 
 - Background gas scattering as an exponential free-flight timer.
 - Voxel-DDA wall collision detection on the same solid/void grid used by the
@@ -600,15 +662,15 @@ range for the current sweep is stored in
 For comparing KWFS collision rates against the first-event field, the
 characteristic length is taken as:
 
-$$
+```math
 L_c = \frac{4V_{\mathrm{void}}}{A_{\mathrm{wall}}}
-$$
+```
 
 and:
 
-$$
+```math
 Kn = \frac{\lambda}{L_c}
-$$
+```
 
 The comparison script joins:
 
@@ -622,25 +684,25 @@ The comparison script joins:
 
 The particle result is normalized per simulated particle:
 
-$$
+```math
 R_{\mathrm{KWFS}}
 =
 \frac{N_{\mathrm{wall\,hits}}}
 {N_{\mathrm{particle}}\,T_{\mathrm{counted}}}
-$$
+```
 
 where `T_counted = (steps - warmup_steps) dt`. This gives units of `s^-1`.
 
 The KCR comparison value is the void-source mean:
 
-$$
+```math
 \langle \mathrm{KCR}\rangle_{\Omega_v}
 =
 \frac{1}{V_{\mathrm{void}}}
 \int_{\Omega_{\mathrm{void}}}
 A(\mathbf{x};\lambda)\frac{\bar{v}}{\lambda}
 \,dV
-$$
+```
 
 Only void voxels are included because gas particles do not occupy solid voxels.
 This quantity has the same unit as `R_KWFS`, but it is a source-field estimate,
@@ -649,17 +711,17 @@ not a trajectory count.
 The KCR chart reports the model gap with the particle simulation as the
 reference:
 
-$$
+```math
 \mathrm{error}_{\mathrm{particle}}
 =
 100\,
 \frac{R_{\mathrm{KWFS}}-\langle \mathrm{KCR}\rangle_{\Omega_v}}
 {R_{\mathrm{KWFS}}}
-$$
+```
 
 For the current `50 ppm`, `5 us` sweep:
 
-| `lambda_um` | `<KCR>_void` (`s^-1`) | `R_KWFS` (`s^-1`) | particle-reference error |
+| `lambda_um` | `KCR_void` (`s^-1`) | `R_KWFS` (`s^-1`) | particle-reference error |
 | ---: | ---: | ---: | ---: |
 | `0.01` | `1.989e9` | `2.233e9` | `10.9%` |
 | `0.05` | `1.624e9` | `2.074e9` | `21.7%` |
@@ -827,7 +889,7 @@ In the continuous directional model, let `u` be a unit direction on the sphere
 `x_i` in direction `u`, and let `\chi_{\mathrm{wall}}(x_i,u)` be `1` only when
 that terminal event is a solid-wall hit. Then:
 
-$$
+```math
 \begin{aligned}
 A(x_i)
 &=
@@ -837,12 +899,12 @@ A(x_i)
 \exp\left(-\frac{\tau(x_i,u)}{\lambda}\right)
 \,d\Omega(u)
 \end{aligned}
-$$
+```
 
 The Fibonacci directions used by the code are a quadrature approximation to
 this sphere integral:
 
-$$
+```math
 \begin{aligned}
 A(x_i)
 &\approx
@@ -853,7 +915,7 @@ A(x_i)
 \frac{1}{N}\sum_{m \in H_i}
 \exp\left(-\frac{d_m}{\lambda}\right)
 \end{aligned}
-$$
+```
 
 where `H_i` is the set of sampled directions that hit a wall, and `d_m` is the
 wall-hit path length for those directions. Directions that escape or are
@@ -872,7 +934,7 @@ Interpretation:
 For thin-film comparisons, the preferred scalar summary is the
 projected-area-normalized volume integral, also called **areal accessibility**:
 
-$$
+```math
 \begin{aligned}
 A_{\mathrm{areal}}
 &=
@@ -881,11 +943,11 @@ A_{\mathrm{areal}}
 A(\mathbf{x})
 \,dV
 \end{aligned}
-$$
+```
 
 On the voxel grid this is computed as:
 
-$$
+```math
 \begin{aligned}
 A_{\mathrm{areal}}
 &\approx
@@ -893,7 +955,7 @@ A_{\mathrm{areal}}
 \sum_{i\in\Omega_{\mathrm{void}}}
 A_i\,\Delta V
 \end{aligned}
-$$
+```
 
 Because `A_i` is dimensionless, `A_areal` has units of length. In output files
 this is stored as `void_accessibility_areal_integral_um`.
@@ -903,10 +965,10 @@ this is stored as `void_accessibility_areal_integral_um`.
 The Kinetic Contact Rate (KCR) attaches a kinetic renewal timescale to the
 direct wall-contact probability:
 
-$$
+```math
 \mathrm{KCR}(\mathbf{x};\lambda)
 = A(\mathbf{x};\lambda)\frac{\bar{v}}{\lambda}
-$$
+```
 
 where `A(x; lambda)` is `accessibility`, `\bar{v}` is the mean molecular speed,
 and `\bar{v}/\lambda` is the mean free-flight renewal rate. KCR has units of
@@ -917,9 +979,9 @@ In the current implementation this replaced the older informal
 `kinetic_contact_rate_s_inv`; `time_weighted_accessibility_s_inv` is kept only
 as a backward-compatible alias. The multiplier
 
-$$
+```math
 \kappa_t = \frac{\bar{v}}{\lambda}
-$$
+```
 
 is the kinetic time factor: the characteristic renewal rate of independent
 free-flight trials. It converts the dimensionless first-contact probability
@@ -927,16 +989,16 @@ free-flight trials. It converts the dimensionless first-contact probability
 
 On the voxel grid, the stored field is:
 
-$$
+```math
 \mathrm{KCR}_i
 =
 A_i \frac{\bar{v}}{\lambda}
-$$
+```
 
 where `i` is a void source voxel. Since all voxels have the same volume in the
 current grid, the void mean used for comparison is:
 
-$$
+```math
 \begin{aligned}
 \langle \mathrm{KCR}\rangle_{\Omega_v}
 &=
@@ -947,7 +1009,7 @@ $$
 \sum_{i\in\Omega_{\mathrm{void}}}
 \mathrm{KCR}_i
 \end{aligned}
-$$
+```
 
 This is written in reports as `void_mean_kinetic_contact_rate_s_inv`. Solid
 voxels are excluded from the mean because they are outside the particle phase
@@ -956,39 +1018,39 @@ space.
 For a finite reference time window `tau`, the corresponding contact probability
 is:
 
-$$
+```math
 P_{\mathrm{contact}}(\mathbf{x};\tau)
 = 1 - \exp[-\mathrm{KCR}(\mathbf{x})\tau]
-$$
+```
 
 For short windows, this reduces to the linear approximation:
 
-$$
+```math
 P_{\mathrm{contact}}(\mathbf{x};\tau)
 \approx
 \mathrm{KCR}(\mathbf{x})\tau
-$$
+```
 
 The expected trajectory collision rate can be written as a steady-state
 density-weighted KCR:
 
-$$
+```math
 R_{\mathrm{KWFS}}
 \approx
 \int_{\Omega_{\mathrm{void}}}
 \rho_{\mathrm{ss}}(\mathbf{x})
 \mathrm{KCR}(\mathbf{x})
 \,dV
-$$
+```
 
 where `rho_ss` is the particle residence density in the void phase:
 
-$$
+```math
 \int_{\Omega_{\mathrm{void}}}
 \rho_{\mathrm{ss}}(\mathbf{x})
 \,dV
 =1
-$$
+```
 
 If `rho_ss` were uniform over the void space, this would reduce to
 `void_mean_kinetic_contact_rate_s_inv`. In real KWFS runs the values need not
@@ -998,13 +1060,13 @@ process.
 
 The practical comparison is therefore:
 
-$$
+```math
 R_{\mathrm{KWFS}}
 =
 \langle \mathrm{KCR}\rangle_{\Omega_v}
 \times
 E_{\mathrm{dyn}}
-$$
+```
 
 where `E_dyn` is a dynamic enhancement factor. `E_dyn > 1` means that the full
 particle trajectories produce more wall collisions than the first-contact
@@ -1018,7 +1080,9 @@ rather than replacing it.
 `vis_ang(x_i)` is the fraction of sampled directions that eventually hit a solid
 surface:
 
-$$V(x_i) = \frac{|H_i|}{N}$$
+```math
+V(x_i) = \frac{|H_i|}{N}
+```
 
 This is shown as `Angle fraction` in the ParaView screenshots.
 
@@ -1034,7 +1098,9 @@ Interpretation:
 
 `d_min_um(x_i)` stores the nearest wall-hit distance over all sampled directions:
 
-$$d_{\min}(x_i) = \min_{m \in H_i} d_m$$
+```math
+d_{\min}(x_i) = \min_{m \in H_i} d_m
+```
 
 Interpretation:
 
@@ -1048,7 +1114,7 @@ Interpretation:
 `source_scatter_fraction(x_i)` is the direction-averaged probability that the
 first event from source voxel `x_i` is scattering before the ray terminal event:
 
-$$
+```math
 \begin{aligned}
 B_{\mathrm{scatter}}(x_i)
 &=
@@ -1060,14 +1126,14 @@ B_{\mathrm{scatter}}(x_i)
 \right]
 \,d\Omega(u)
 \end{aligned}
-$$
+```
 
 The remaining terminal probability is assigned according to how the ray ends:
 wall hit, box escape, or max-distance truncation. With terminal indicators
 `\chi_{\mathrm{wall}}`, `\chi_{\mathrm{escape}}`, and `\chi_{\mathrm{lost}}`,
 the per-source continuous budget is:
 
-$$
+```math
 \begin{aligned}
 1
 &=
@@ -1085,12 +1151,14 @@ $$
 \right]
 \,d\Omega(u)
 \end{aligned}
-$$
+```
 
 `accessibility(x_i)` is the direct surface-arrival fraction, so the source-side
 budget is:
 
-$$B_{\mathrm{scatter}}(x_i) + A(x_i) + B_{\mathrm{escape}}(x_i) + B_{\mathrm{lost}}(x_i) \approx 1$$
+```math
+B_{\mathrm{scatter}}(x_i) + A(x_i) + B_{\mathrm{escape}}(x_i) + B_{\mathrm{lost}}(x_i) \approx 1
+```
 
 Interpretation:
 
@@ -1116,7 +1184,9 @@ probability_sum
 These values are source-mass-weighted means of the per-source budget fields and
 check whether the ensemble probability is conserved:
 
-$$\langle B_{\mathrm{scatter}} + A + B_{\mathrm{escape}} + B_{\mathrm{lost}}\rangle_{\Omega_v} \approx 1$$
+```math
+\langle B_{\mathrm{scatter}} + A + B_{\mathrm{escape}} + B_{\mathrm{lost}}\rangle_{\Omega_v} \approx 1
+```
 
 For each run, `source_probability_sum` and `source_conservation_error` show the
 same check voxel by voxel.
