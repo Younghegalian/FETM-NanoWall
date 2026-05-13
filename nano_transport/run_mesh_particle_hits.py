@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -92,9 +93,11 @@ def main(argv: list[str] | None = None) -> int:
     kernel = Path(args.kernel)
     if not kernel.is_absolute():
         kernel = Path(__file__).resolve().parents[1] / kernel
+    kernel = _windows_exe_path(kernel)
     mesh_kernel = Path(args.mesh_kernel)
     if not mesh_kernel.is_absolute():
         mesh_kernel = Path(__file__).resolve().parents[1] / mesh_kernel
+    mesh_kernel = _windows_exe_path(mesh_kernel)
     if args.rebuild_kernel or not kernel.exists():
         build_kernel(kernel)
     if args.rebuild_kernel or not mesh_kernel.exists():
@@ -295,14 +298,27 @@ def main(argv: list[str] | None = None) -> int:
 
 def build_kernel(kernel: Path) -> None:
     source = Path(__file__).resolve().parents[1] / "transport_cpp" / "mesh_particle_hits.cpp"
+    kernel = _windows_exe_path(kernel)
     kernel.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["clang++", "-O3", "-std=c++17", str(source), "-o", str(kernel)], check=True)
+    subprocess.run([_clangxx(), "-O3", "-std=c++17", str(source), "-o", str(kernel)], check=True)
 
 
 def build_mesh_kernel(mesh_kernel: Path) -> None:
     source = Path(__file__).resolve().parents[1] / "transport_cpp" / "height_isosurface.cpp"
+    mesh_kernel = _windows_exe_path(mesh_kernel)
     mesh_kernel.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["clang++", "-O3", "-std=c++17", str(source), "-o", str(mesh_kernel)], check=True)
+    subprocess.run([_clangxx(), "-O3", "-std=c++17", str(source), "-o", str(mesh_kernel)], check=True)
+
+
+def _windows_exe_path(path: Path) -> Path:
+    if os.name == "nt" and path.suffix == "":
+        return path.with_suffix(".exe")
+    return path
+
+
+def _clangxx() -> str:
+    bundled = Path(r"C:\Program Files\LLVM\bin\clang++.exe")
+    return str(bundled) if os.name == "nt" and bundled.exists() else "clang++"
 
 
 def run_mesh_builder(

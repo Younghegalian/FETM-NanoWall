@@ -2,11 +2,15 @@ __pycache__/
 *.py[cod]
 .DS_Store
 .venv/
+.uv-bootstrap/
+.uv-cache/
+.uv-python/
 venv/
 .cache/
 build/
 dist/
 *.egg-info/
+gsplat_build.log
 
 # Large generated research artifacts
 runs/
@@ -19,6 +23,7 @@ data/precomputed_depth/
 *.glb
 *.ply
 transport_cpp/transport_dda
+transport_cpp/*.exe
 
 # Model caches should live outside version control.
 models/

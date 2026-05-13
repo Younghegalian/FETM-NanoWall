@@ -40,7 +40,8 @@ static inline size_t index_zyx(int x, int y, int z, int nx, int ny) {
 static std::vector<Vec3> fibonacci_sphere(int n) {
     std::vector<Vec3> dirs;
     dirs.reserve(static_cast<size_t>(n));
-    const double golden_angle = M_PI * (3.0 - std::sqrt(5.0));
+    constexpr double pi = 3.141592653589793238462643383279502884;
+    const double golden_angle = pi * (3.0 - std::sqrt(5.0));
     for (int i = 0; i < n; ++i) {
         double z = 1.0 - (2.0 * (static_cast<double>(i) + 0.5) / static_cast<double>(n));
         double r = std::sqrt(std::max(0.0, 1.0 - z * z));
